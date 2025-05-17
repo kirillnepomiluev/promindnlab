@@ -153,12 +153,17 @@ export class TelegramService {
   }
 
   private registerHandlers() {
-    this.bot.on('text', async (ctx) => {
+    this.bot.on('text', async (ctx, next) => {
       try {
         const user = await this.ensureUser(ctx);
         if (!user) return;
         const q = ctx.message.text?.trim();
         if (!q) return;
+
+        // пропускаем другие команды, кроме '/image', чтобы они обработались далее
+        if (q.startsWith('/') && !q.startsWith('/image')) {
+          return next();
+        }
 
         if (q.startsWith('/image')) {
           // Генерация изображения
@@ -248,8 +253,8 @@ export class TelegramService {
       }
     });
 
-    // команда для просмотра баланса и получения пригласительной ссылки
-    this.bot.command('profile', async (ctx) => {
+    // общая функция-обработчик команды /profile и текста "profile"
+    const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from);
       await ctx.reply(
         `Ваш баланс: ${profile.tokens.tokens} токенов`,
@@ -260,7 +265,12 @@ export class TelegramService {
           ),
         ]),
       );
-    });
+    };
+
+    // команда для просмотра баланса и получения пригласительной ссылки
+    this.bot.command('profile', profileHandler);
+    // поддерживаем вариант без слеша
+    this.bot.hears(/^profile$/i, profileHandler);
 
     // обработка перехода по ссылке с кодом
     this.bot.start(async (ctx) => {
