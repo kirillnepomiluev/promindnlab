@@ -83,3 +83,7 @@ Nest is an MIT-licensed open source project. It can grow thanks to the sponsors 
 ## License
 
 Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+
+## Настройка Prettier
+
+Обновлена конфигурация Prettier: параметр "printWidth" установлен в значение 150, чтобы длинные импортные строки не переносились автоматически.
