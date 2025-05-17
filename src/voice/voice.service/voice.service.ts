@@ -29,13 +29,18 @@ ffmpeg.setFfmpegPath(ffmpegPath);
 @Injectable()
 export class VoiceService {
   private readonly logger = new Logger(VoiceService.name);
-  private readonly configService = new ConfigService();
-  private readonly client = new OpenAI({
-    apiKey: this.configService.get<string>('OPENAI_API_KEY_PRO'),
-    baseURL: 'https://chat.neurolabtg.ru/v1',
-  });
+  private readonly client: OpenAI;
 
-  constructor(@InjectBot() private readonly bot: Telegraf) {}
+  constructor(
+    @InjectBot() private readonly bot: Telegraf,
+    private readonly configService: ConfigService,
+  ) {
+    // Инициализируем клиента OpenAI, используя переданный ConfigService
+    this.client = new OpenAI({
+      apiKey: this.configService.get<string>('OPENAI_API_KEY_PRO'),
+      baseURL: 'https://chat.neurolabtg.ru/v1',
+    });
+  }
 
   /** 1️⃣  OGG → текст (Whisper) */
   async voiceToText(voice: TgVoice): Promise<string> {
