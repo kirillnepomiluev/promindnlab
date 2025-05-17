@@ -16,7 +16,8 @@ export class UserProfile {
 
   // Храним ID пользователя как bigint,
   // потому что Telegram выдаёт значения больше 2^31
-  @Column({ unique: true, type: 'bigint' })
+  // поле telegramId обязательно к заполнению
+  @Column({ unique: true, type: 'bigint', nullable: false })
   telegramId: string;
 
   @Column({ nullable: true })
