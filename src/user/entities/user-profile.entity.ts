@@ -1,4 +1,10 @@
-import { Column, Entity, OneToOne, JoinColumn, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  OneToOne,
+  JoinColumn,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 import { UserTokens } from './user-tokens.entity';
 
 // Сущность профиля пользователя в Telegram
@@ -8,8 +14,10 @@ export class UserProfile {
   @PrimaryGeneratedColumn()
   id: number;
 
-  @Column({ unique: true })
-  telegramId: number;
+  // Храним ID пользователя как bigint,
+  // потому что Telegram выдаёт значения больше 2^31
+  @Column({ unique: true, type: 'bigint' })
+  telegramId: string;
 
   @Column({ nullable: true })
   firstName?: string;

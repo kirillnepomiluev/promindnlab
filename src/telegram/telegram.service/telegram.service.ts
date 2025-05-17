@@ -42,14 +42,16 @@ export class TelegramService {
   private async ensureUser(ctx: Context): Promise<UserProfile | null> {
     const from = ctx.message.from;
     let profile = await this.profileRepo.findOne({
-      where: { telegramId: from.id },
+      // Сравниваем строковый telegramId
+      where: { telegramId: String(from.id) },
       relations: ['tokens'],
     });
 
     const now = new Date();
     if (!profile) {
       profile = this.profileRepo.create({
-        telegramId: from.id,
+        // Сохраняем telegramId как строку
+        telegramId: String(from.id),
         firstName: from.first_name,
         username: from.username,
         firstVisitAt: now,
