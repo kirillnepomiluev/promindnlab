@@ -13,6 +13,9 @@ import { MainUser } from 'src/external/entities/main-user.entity';
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
+  // текст приветственного сообщения
+  private readonly welcomeMessage =
+    'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!';
   // временное хранилище для незарегистрированных пользователей,
   // которые перешли по пригласительной ссылке
   private pendingInvites = new Map<number, string>();
@@ -99,9 +102,7 @@ export class TelegramService {
     }
 
     if (isNew && ctx) {
-      await ctx.reply(
-        'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!',
-      );
+      await ctx.reply(this.welcomeMessage);
     }
 
     return profile;
@@ -306,6 +307,17 @@ export class TelegramService {
         this.logger.error('Ошибка команды img', err);
         await ctx.reply('Ошибка при выполнении команды /img');
       }
+    });
+
+    // команда /hello выводит приветственное сообщение
+    this.bot.command('hello', async (ctx) => {
+      await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      await ctx.reply(this.welcomeMessage);
+    });
+    // поддерживаем вариант без слеша
+    this.bot.hears(/^hello$/i, async (ctx) => {
+      await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      await ctx.reply(this.welcomeMessage);
     });
 
     // общая функция-обработчик команды /profile и текста "profile"
