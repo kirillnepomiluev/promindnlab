@@ -45,13 +45,18 @@ export class TelegramService {
   }
 
   // отправка анимации (GIF/MP4) из папки assets/animations
+  // Отправка анимации вместе с текстом и возврат полученного сообщения
   private async sendAnimation(
     ctx: Context,
     fileName: string,
     caption?: string,
   ) {
     const filePath = path.join(process.cwd(), 'assets', 'animations', fileName);
-    await ctx.replyWithAnimation({ source: filePath }, caption ? { caption } : undefined);
+    // возвращаем сообщение, чтобы можно было удалить его позже
+    return ctx.replyWithAnimation(
+      { source: filePath },
+      caption ? { caption } : undefined,
+    );
   }
 
   // Получить ФИО пользователя из основной базы для отображения
@@ -194,13 +199,15 @@ export class TelegramService {
 
         if (q.startsWith('/image')) {
           // Генерация изображения
-          // отправляем сообщение-заглушку "РИСУЮ" и потом меняем его на результат
-          const placeholder = await ctx.reply('РИСУЮ ...');
-          // показываем анимацию рисования
-          await this.sendAnimation(ctx, 'drawing_a.mp4');
+          // отправляем сообщение-заглушку с анимацией
+          const placeholder = await this.sendAnimation(
+            ctx,
+            'drawing_a.mp4',
+            'РИСУЮ ...',
+          );
           const prompt = q.replace('/image', '').trim();
           const image = await this.openai.generateImage(prompt);
-          // удаляем сообщение "РИСУЮ" перед отправкой изображения
+          // удаляем сообщение-заглушку с анимацией
           await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
@@ -210,37 +217,33 @@ export class TelegramService {
         } else {
           // Текстовый чат
           // показываем пользователю, что мы "думаем" над ответом
-          const placeholder = await ctx.reply('ДУМАЮ ...');
-          // показываем анимацию размышления
-          await this.sendAnimation(ctx, 'thinking_pen_a.mp4');
+          const thinkingMsg = await this.sendAnimation(
+            ctx,
+            'thinking_pen_a.mp4',
+            'ДУМАЮ ...',
+          );
           const answer = await this.openai.chat(q, ctx.message.from.id);
+          // удаляем сообщение с анимацией "думаю"
+          await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
+
           if (answer.startsWith('/imagine')) {
-            // если ответ подразумевает генерацию изображения,
-            // меняем текст заглушки и отправляем изображение
-            await ctx.telegram.editMessageText(
-              ctx.chat.id,
-              placeholder.message_id,
-              undefined,
+            // если ответ подразумевает генерацию изображения
+            const drawMsg = await this.sendAnimation(
+              ctx,
+              'drawing_a.mp4',
               'РИСУЮ ...',
             );
-            // отправляем анимацию рисования
-            await this.sendAnimation(ctx, 'drawing_a.mp4');
             const prompt = answer.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
-            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
             if (image) {
               await this.sendPhoto(ctx, image);
             } else {
               await ctx.reply('Не удалось сгенерировать изображение');
             }
           } else {
-            // подменяем текст заглушки на конечный ответ
-            await ctx.telegram.editMessageText(
-              ctx.chat.id,
-              placeholder.message_id,
-              undefined,
-              answer,
-            );
+            // отправляем готовый ответ отдельным сообщением
+            await ctx.reply(answer);
           }
         }
       } catch (err) {
@@ -254,10 +257,12 @@ export class TelegramService {
         const user = await this.ensureUser(ctx);
         if (!user) return;
         const tgVoice = ctx.message.voice;
-        // показываем процесс распознавания голосового сообщения
-        const listenMsg = await ctx.reply('СЛУШАЮ ...');
-        // показываем анимацию прослушивания
-        await this.sendAnimation(ctx, 'listen_a.mp4');
+        // показываем процесс распознавания голосового сообщения вместе с анимацией
+        const listenMsg = await this.sendAnimation(
+          ctx,
+          'listen_a.mp4',
+          'СЛУШАЮ ...',
+        );
         const text = await this.voice.voiceToText(tgVoice);
         await ctx.telegram.deleteMessage(ctx.chat.id, listenMsg.message_id);
         if (!text) return;
@@ -265,8 +270,11 @@ export class TelegramService {
         const cleaned = text.trim().toLowerCase();
         if (cleaned.startsWith('нарисуй') || cleaned.startsWith('imagine')) {
           // Генерация изображения по голосовому сообщению
-          const placeholder = await ctx.reply('РИСУЮ ...');
-          await this.sendAnimation(ctx, 'drawing_a.mp4');
+          const placeholder = await this.sendAnimation(
+            ctx,
+            'drawing_a.mp4',
+            'РИСУЮ ...',
+          );
           const image = await this.openai.generateImage(text);
           await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
@@ -276,21 +284,23 @@ export class TelegramService {
           }
         } else {
           // Текстовый ответ
-          const placeholder = await ctx.reply('ДУМАЮ ...');
-          await this.sendAnimation(ctx, 'thinking_pen_a.mp4');
+          const thinkingMsg = await this.sendAnimation(
+            ctx,
+            'thinking_pen_a.mp4',
+            'ДУМАЮ ...',
+          );
           const answer = await this.openai.chat(text, ctx.message.from.id);
+          await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
           if (answer.startsWith('/imagine')) {
             // Генерация изображения
-            await ctx.telegram.editMessageText(
-              ctx.chat.id,
-              placeholder.message_id,
-              undefined,
+            const drawMsg = await this.sendAnimation(
+              ctx,
+              'drawing_a.mp4',
               'РИСУЮ ...',
             );
-            await this.sendAnimation(ctx, 'drawing_a.mp4');
             const prompt = answer.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
-            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
             if (image) {
               await this.sendPhoto(ctx, image);
             } else {
@@ -298,15 +308,13 @@ export class TelegramService {
             }
           } else {
             // озвучиваем ответ
-            await ctx.telegram.editMessageText(
-              ctx.chat.id,
-              placeholder.message_id,
-              undefined,
+            const recordMsg = await this.sendAnimation(
+              ctx,
+              'play_a.mp4',
               'ЗАПИСЫВАЮ ...',
             );
-            await this.sendAnimation(ctx, 'play_a.mp4');
             const ogg = await this.voice.textToSpeech(answer);
-            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            await ctx.telegram.deleteMessage(ctx.chat.id, recordMsg.message_id);
             await ctx.replyWithVoice({ source: ogg });
           }
         }
@@ -321,8 +329,11 @@ export class TelegramService {
         const user = await this.ensureUser(ctx);
         if (!user) return;
         const prompt = ctx.message.text.replace('/img', '').trim();
-        const placeholder = await ctx.reply('РИСУЮ ...');
-        await this.sendAnimation(ctx, 'drawing_a.mp4');
+        const placeholder = await this.sendAnimation(
+          ctx,
+          'drawing_a.mp4',
+          'РИСУЮ ...',
+        );
         const image = await this.openai.generateImage(prompt);
         await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
         if (image) {
