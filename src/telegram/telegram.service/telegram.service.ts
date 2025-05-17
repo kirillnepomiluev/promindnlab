@@ -257,17 +257,12 @@ export class TelegramService {
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from);
-      const inviteLink = `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`;
-
-      // отправляем текстовое сообщение с ссылкой и кнопкой
       await ctx.reply(
-        `Ваш баланс: ${profile.tokens.tokens} токенов\nПригласительная ссылка: ${inviteLink}`,
-        Markup.inlineKeyboard([Markup.button.url('Перейти', inviteLink)]),
+        `Ваш баланс: ${profile.tokens.tokens} токенов`,
+        Markup.inlineKeyboard([
+          Markup.button.callback('Получить ссылку', 'invite_link'),
+        ]),
       );
-
-      // генерируем QR-код и отправляем его как фото
-      const qr = await QRCode.toBuffer(inviteLink);
-      await ctx.replyWithPhoto({ source: qr });
     };
 
     // команда для просмотра баланса и получения пригласительной ссылки
@@ -316,6 +311,21 @@ export class TelegramService {
       await this.findOrCreateProfile(ctx.from, inviterId);
       this.pendingInvites.delete(ctx.from.id);
       await ctx.editMessageText('Регистрация завершена');
+    });
+
+    this.bot.action('invite_link', async (ctx) => {
+      await ctx.answerCbQuery();
+
+      const profile = await this.findOrCreateProfile(ctx.from);
+      const inviteLink = `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`;
+
+      await ctx.reply(
+        `Пригласительная ссылка: ${inviteLink}`,
+        Markup.inlineKeyboard([Markup.button.url('Перейти', inviteLink)]),
+      );
+
+      const qr = await QRCode.toBuffer(inviteLink);
+      await ctx.replyWithPhoto({ source: qr });
     });
 
     this.bot.catch((err, ctx) => {
