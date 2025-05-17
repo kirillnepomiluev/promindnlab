@@ -7,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserProfile } from '../user/entities/user-profile.entity';
 import { UserTokens } from '../user/entities/user-tokens.entity';
+import { MainUser } from '../external/entities/main-user.entity';
 
 // telegram.module.ts
 @Module({
@@ -19,7 +20,9 @@ import { UserTokens } from '../user/entities/user-tokens.entity';
         telegram: { apiRoot: 'https://api.telegram.org', timeout: 120_000 },
       }),
     }),
+    // Регистрируем репозитории для локальной и основной БД
     TypeOrmModule.forFeature([UserProfile, UserTokens]),
+    TypeOrmModule.forFeature([MainUser], 'mainDb'),
     OpenaiModule,
     VoiceModule,
   ],
