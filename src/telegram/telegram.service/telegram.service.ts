@@ -319,13 +319,9 @@ export class TelegramService {
       const profile = await this.findOrCreateProfile(ctx.from);
       const inviteLink = `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`;
 
-      await ctx.reply(
-        `Пригласительная ссылка: ${inviteLink}`,
-        Markup.inlineKeyboard([Markup.button.url('Перейти', inviteLink)]),
-      );
-
       const qr = await QRCode.toBuffer(inviteLink);
-      await ctx.replyWithPhoto({ source: qr });
+      // Отправляем QR-код и текст с ссылкой одним сообщением
+      await ctx.replyWithPhoto({ source: qr }, { caption: `Пригласительная ссылка: ${inviteLink}` });
     });
 
     this.bot.catch((err, ctx) => {
