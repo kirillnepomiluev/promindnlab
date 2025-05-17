@@ -7,6 +7,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
+import { MainUser } from 'src/external/entities/main-user.entity';
 
 @Injectable()
 export class TelegramService {
@@ -20,6 +21,8 @@ export class TelegramService {
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
     private readonly tokensRepo: Repository<UserTokens>,
+    @InjectRepository(MainUser, 'mainDb')
+    private readonly mainUserRepo: Repository<MainUser>,
   ) {
     this.registerHandlers();
   }
@@ -41,6 +44,7 @@ export class TelegramService {
    */
   private async ensureUser(ctx: Context): Promise<UserProfile | null> {
     const from = ctx.message.from;
+    // Пытаемся найти пользователя в локальной БД проекта
     let profile = await this.profileRepo.findOne({
       // Сравниваем строковый telegramId
       where: { telegramId: String(from.id) },
@@ -49,11 +53,20 @@ export class TelegramService {
 
     const now = new Date();
     if (!profile) {
+      // Если пользователя нет в локальной БД, ищем его в основной базе
+      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: from.id } });
+      if (!mainUser) {
+        // Пользователь отсутствует в обеих базах
+        await ctx.reply('Перейдите по пригласительной ссылке. чтобы пользоваться данным сервисом, Вам нужно приглашение');
+        return null;
+      }
+
+      // Создаём профиль на основе данных из основной базы
       profile = this.profileRepo.create({
         // Сохраняем telegramId как строку
         telegramId: String(from.id),
-        firstName: from.first_name,
-        username: from.username,
+        firstName: mainUser.firstName ?? from.first_name,
+        username: mainUser.username ?? from.username,
         firstVisitAt: now,
         lastMessageAt: now,
       });
@@ -146,9 +159,7 @@ export class TelegramService {
           if (image) {
             await this.sendPhoto(ctx, image);
           } else {
-            await ctx.reply(
-              'Не удалось сгенерировать изображение по голосовому сообщению',
-            );
+            await ctx.reply('Не удалось сгенерировать изображение по голосовому сообщению');
           }
         } else {
           // Текстовый ответ
@@ -169,9 +180,7 @@ export class TelegramService {
         }
       } catch (err) {
         this.logger.error('Ошибка обработки голосового сообщения', err);
-        await ctx.reply(
-          'Произошла ошибка при обработке вашего голосового сообщения',
-        );
+        await ctx.reply('Произошла ошибка при обработке вашего голосового сообщения');
       }
     });
 
@@ -194,10 +203,7 @@ export class TelegramService {
 
     this.bot.catch((err, ctx) => {
       this.logger.error('TG error', err);
-      this.logger.debug(
-        'Update caused error',
-        JSON.stringify(ctx.update, null, 2),
-      );
+      this.logger.debug('Update caused error', JSON.stringify(ctx.update, null, 2));
     });
   }
 }
