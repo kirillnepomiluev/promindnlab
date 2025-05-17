@@ -4,6 +4,9 @@ import { OpenaiModule } from 'src/openai/openai.module';
 import { VoiceModule } from 'src/voice/voice.module';
 import { TelegrafModule } from 'nestjs-telegraf';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { UserProfile } from '../user/entities/user-profile.entity';
+import { UserTokens } from '../user/entities/user-tokens.entity';
 
 // telegram.module.ts
 @Module({
@@ -16,6 +19,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
         telegram: { apiRoot: 'https://api.telegram.org', timeout: 120_000 },
       }),
     }),
+    TypeOrmModule.forFeature([UserProfile, UserTokens]),
     OpenaiModule,
     VoiceModule,
   ],
