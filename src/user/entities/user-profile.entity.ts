@@ -26,6 +26,10 @@ export class UserProfile {
   @Column({ type: 'timestamptz' })
   lastMessageAt: Date;
 
+  // ID пользователя, который пригласил этого юзера
+  @Column({ nullable: true, type: 'bigint' })
+  invitedBy?: string;
+
   @Column({ nullable: true })
   userTokensId: number;
 
