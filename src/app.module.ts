@@ -16,6 +16,7 @@ import { VoiceModule } from './voice/voice.module';
         '.env',
       expandVariables: true,
     }),
+    // Подключение к локальной базе данных проекта
     TypeOrmModule.forRoot({
       type: 'postgres',
       host: process.env.DATABASE_HOST,
@@ -27,6 +28,18 @@ import { VoiceModule } from './voice/voice.module';
       synchronize: true,
       // migrations: [__dirname + '/migrations/*{.ts,.js}'],
       // migrationsRun: true,
+    }),
+    // Подключение к основной базе данных проекта
+    TypeOrmModule.forRoot({
+      name: 'mainDb',
+      type: 'postgres',
+      host: process.env.MAIN_DB_HOST,
+      port: Number(process.env.MAIN_DB_PORT),
+      username: process.env.MAIN_DB_USER,
+      password: process.env.MAIN_DB_PASS,
+      database: process.env.MAIN_DB_NAME,
+      entities: [__dirname + '/**/*.entity{.ts,.js}'],
+      synchronize: false,
     }),
     TelegramModule,
     OpenaiModule,

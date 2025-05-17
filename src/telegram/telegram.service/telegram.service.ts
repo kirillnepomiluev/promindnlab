@@ -1,16 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectBot } from 'nestjs-telegraf';
-import { Telegraf, Context } from 'telegraf';
+import { Telegraf, Context, Markup } from 'telegraf';
 import { OpenAiService } from 'src/openai/openai.service/openai.service';
 import { VoiceService } from 'src/voice/voice.service/voice.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
+import { MainUser } from 'src/external/entities/main-user.entity';
 
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
+  // временное хранилище для незарегистрированных пользователей,
+  // которые перешли по пригласительной ссылке
+  private pendingInvites = new Map<number, string>();
 
   constructor(
     @InjectBot() private readonly bot: Telegraf<Context>,
@@ -20,6 +24,8 @@ export class TelegramService {
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
     private readonly tokensRepo: Repository<UserTokens>,
+    @InjectRepository(MainUser, 'mainDb')
+    private readonly mainUserRepo: Repository<MainUser>,
   ) {
     this.registerHandlers();
   }
@@ -33,29 +39,36 @@ export class TelegramService {
     }
   }
 
+  // Получить ФИО пользователя из основной базы для отображения
+  private getFullName(user: MainUser): string {
+    const parts = [] as string[];
+    if (user.firstName) parts.push(user.firstName);
+    if (user.lastName) parts.push(user.lastName);
+    return parts.join(' ').trim() || user.username || String(user.telegramId);
+  }
+
   /**
-   * Проверяет наличие пользователя в БД,
-   * создаёт профиль и токены при отсутствии.
-   * Также обновляет дату последнего сообщения и списывает один токен.
-   * Возвращает профиль или null, если токены закончились.
+   * Создание профиля при отсутствии в локальной базе
    */
-  private async ensureUser(ctx: Context): Promise<UserProfile | null> {
-    const from = ctx.message.from;
+  private async findOrCreateProfile(
+    from: { id: number; first_name?: string; username?: string },
+    invitedBy?: string,
+  ): Promise<UserProfile> {
     let profile = await this.profileRepo.findOne({
-      // Сравниваем строковый telegramId
       where: { telegramId: String(from.id) },
       relations: ['tokens'],
     });
 
     const now = new Date();
     if (!profile) {
+      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: from.id } });
       profile = this.profileRepo.create({
-        // Сохраняем telegramId как строку
         telegramId: String(from.id),
-        firstName: from.first_name,
-        username: from.username,
+        firstName: mainUser?.firstName ?? from.first_name,
+        username: mainUser?.username ?? from.username,
         firstVisitAt: now,
         lastMessageAt: now,
+        invitedBy,
       });
       profile = await this.profileRepo.save(profile);
 
@@ -68,9 +81,7 @@ export class TelegramService {
       profile.lastMessageAt = now;
       await this.profileRepo.save(profile);
       if (!profile.tokens) {
-        profile.tokens = await this.tokensRepo.findOne({
-          where: { userId: profile.id },
-        });
+        profile.tokens = await this.tokensRepo.findOne({ where: { userId: profile.id } });
       }
     }
 
@@ -80,6 +91,55 @@ export class TelegramService {
       profile.userTokensId = tokens.id;
       await this.profileRepo.save(profile);
       profile.tokens = tokens;
+    }
+
+    return profile;
+  }
+
+  /**
+   * Проверяет наличие пользователя в БД,
+   * создаёт профиль и токены при отсутствии.
+   * Также обновляет дату последнего сообщения и списывает один токен.
+   * Возвращает профиль или null, если токены закончились.
+   */
+  private async ensureUser(ctx: Context): Promise<UserProfile | null> {
+    const from = ctx.message.from;
+    // пробуем найти пользователя в локальной базе
+    let profile = await this.profileRepo.findOne({
+      where: { telegramId: String(from.id) },
+      relations: ['tokens'],
+    });
+
+    if (!profile) {
+      // если его нет, ищем в основной базе
+      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: from.id } });
+      if (!mainUser) {
+        const inviterId = this.pendingInvites.get(from.id);
+        if (!inviterId) {
+          await ctx.reply('Пожалуйста, перейдите по пригласительной ссылке.');
+          return null;
+        }
+
+        const inviter = await this.mainUserRepo.findOne({ where: { telegramId: Number(inviterId) } });
+        if (!inviter) {
+          await ctx.reply('Пригласитель не найден.');
+          this.pendingInvites.delete(from.id);
+          return null;
+        }
+
+        await ctx.reply(
+          `Вас пригласил пользователь - ${this.getFullName(inviter)}. Вы подтверждаете?`,
+          Markup.inlineKeyboard([Markup.button.callback('Подтвердить', `confirm:${inviterId}`)]),
+        );
+        return null;
+      }
+
+      profile = await this.findOrCreateProfile(
+        from,
+        mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined,
+      );
+    } else {
+      profile = await this.findOrCreateProfile(from);
     }
 
     if (profile.tokens.tokens <= 0) {
@@ -146,9 +206,7 @@ export class TelegramService {
           if (image) {
             await this.sendPhoto(ctx, image);
           } else {
-            await ctx.reply(
-              'Не удалось сгенерировать изображение по голосовому сообщению',
-            );
+            await ctx.reply('Не удалось сгенерировать изображение по голосовому сообщению');
           }
         } else {
           // Текстовый ответ
@@ -169,9 +227,7 @@ export class TelegramService {
         }
       } catch (err) {
         this.logger.error('Ошибка обработки голосового сообщения', err);
-        await ctx.reply(
-          'Произошла ошибка при обработке вашего голосового сообщения',
-        );
+        await ctx.reply('Произошла ошибка при обработке вашего голосового сообщения');
       }
     });
 
@@ -192,12 +248,60 @@ export class TelegramService {
       }
     });
 
+    // команда для просмотра баланса и получения пригласительной ссылки
+    this.bot.command('profile', async (ctx) => {
+      const profile = await this.findOrCreateProfile(ctx.message.from);
+      await ctx.reply(
+        `Ваш баланс: ${profile.tokens.tokens} токенов`,
+        Markup.inlineKeyboard([
+          Markup.button.url(
+            'Пригласительная ссылка',
+            `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`,
+          ),
+        ]),
+      );
+    });
+
+    // обработка перехода по ссылке с кодом
+    this.bot.start(async (ctx) => {
+      const payload = ctx.startPayload;
+      const exists = await this.profileRepo.findOne({
+        where: { telegramId: String(ctx.from.id) },
+      });
+      if (exists) {
+        await ctx.reply('Вы уже зарегистрированы');
+        return;
+      }
+
+      if (!payload) {
+        await ctx.reply('Пожалуйста, перейдите по пригласительной ссылке.');
+        return;
+      }
+
+      this.pendingInvites.set(ctx.from.id, payload);
+      const inviter = await this.mainUserRepo.findOne({ where: { telegramId: Number(payload) } });
+      if (!inviter) {
+        await ctx.reply('Пригласитель не найден.');
+        return;
+      }
+
+      await ctx.reply(
+        `Вас пригласил пользователь - ${this.getFullName(inviter)}. Вы подтверждаете?`,
+        Markup.inlineKeyboard([Markup.button.callback('Подтвердить', `confirm:${payload}`)]),
+      );
+    });
+
+    // подтверждение приглашения и создание профиля
+    this.bot.action(/^confirm:(.+)/, async (ctx) => {
+      const inviterId = ctx.match[1];
+      await this.findOrCreateProfile(ctx.from, inviterId);
+      this.pendingInvites.delete(ctx.from.id);
+      await ctx.editMessageText('Регистрация завершена');
+    });
+
     this.bot.catch((err, ctx) => {
       this.logger.error('TG error', err);
-      this.logger.debug(
-        'Update caused error',
-        JSON.stringify(ctx.update, null, 2),
-      );
+      this.logger.debug('Update caused error', JSON.stringify(ctx.update, null, 2));
     });
   }
 }
