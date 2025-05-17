@@ -168,8 +168,12 @@ export class TelegramService {
 
         if (q.startsWith('/image')) {
           // Генерация изображения
+          // отправляем сообщение-заглушку "РИСУЮ" и потом меняем его на результат
+          const placeholder = await ctx.reply('РИСУЮ ...');
           const prompt = q.replace('/image', '').trim();
           const image = await this.openai.generateImage(prompt);
+          // удаляем сообщение "РИСУЮ" перед отправкой изображения
+          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
           } else {
@@ -177,18 +181,34 @@ export class TelegramService {
           }
         } else {
           // Текстовый чат
+          // показываем пользователю, что мы "думаем" над ответом
+          const placeholder = await ctx.reply('ДУМАЮ ...');
           const answer = await this.openai.chat(q, ctx.message.from.id);
           if (answer.startsWith('/imagine')) {
-            // Генерация изображения
+            // если ответ подразумевает генерацию изображения,
+            // меняем текст заглушки и отправляем изображение
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              placeholder.message_id,
+              undefined,
+              'РИСУЮ ...',
+            );
             const prompt = answer.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
             if (image) {
               await this.sendPhoto(ctx, image);
             } else {
               await ctx.reply('Не удалось сгенерировать изображение');
             }
           } else {
-            await ctx.reply(answer);
+            // подменяем текст заглушки на конечный ответ
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              placeholder.message_id,
+              undefined,
+              answer,
+            );
           }
         }
       } catch (err) {
@@ -202,13 +222,18 @@ export class TelegramService {
         const user = await this.ensureUser(ctx);
         if (!user) return;
         const tgVoice = ctx.message.voice;
+        // показываем процесс распознавания голосового сообщения
+        const listenMsg = await ctx.reply('СЛУШАЮ ...');
         const text = await this.voice.voiceToText(tgVoice);
+        await ctx.telegram.deleteMessage(ctx.chat.id, listenMsg.message_id);
         if (!text) return;
 
         const cleaned = text.trim().toLowerCase();
         if (cleaned.startsWith('нарисуй') || cleaned.startsWith('imagine')) {
           // Генерация изображения по голосовому сообщению
+          const placeholder = await ctx.reply('РИСУЮ ...');
           const image = await this.openai.generateImage(text);
+          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
           } else {
@@ -216,18 +241,34 @@ export class TelegramService {
           }
         } else {
           // Текстовый ответ
+          const placeholder = await ctx.reply('ДУМАЮ ...');
           const answer = await this.openai.chat(text, ctx.message.from.id);
           if (answer.startsWith('/imagine')) {
             // Генерация изображения
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              placeholder.message_id,
+              undefined,
+              'РИСУЮ ...',
+            );
             const prompt = answer.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
             if (image) {
               await this.sendPhoto(ctx, image);
             } else {
               await ctx.reply('Не удалось сгенерировать изображение');
             }
           } else {
+            // озвучиваем ответ
+            await ctx.telegram.editMessageText(
+              ctx.chat.id,
+              placeholder.message_id,
+              undefined,
+              'ЗАПИСЫВАЮ ...',
+            );
             const ogg = await this.voice.textToSpeech(answer);
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
             await ctx.replyWithVoice({ source: ogg });
           }
         }
@@ -242,7 +283,9 @@ export class TelegramService {
         const user = await this.ensureUser(ctx);
         if (!user) return;
         const prompt = ctx.message.text.replace('/img', '').trim();
+        const placeholder = await ctx.reply('РИСУЮ ...');
         const image = await this.openai.generateImage(prompt);
+        await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
         if (image) {
           await this.sendPhoto(ctx, image);
         } else {
