@@ -168,9 +168,12 @@ export class TelegramService {
   private registerHandlers() {
     this.bot.on('text', async (ctx, next) => {
       try {
+        const q = ctx.message.text?.trim();
+        if (q?.startsWith('/start')) {
+          return next();
+        }
         const user = await this.ensureUser(ctx);
         if (!user) return;
-        const q = ctx.message.text?.trim();
         if (!q) return;
 
         // пропускаем другие команды, кроме '/image', чтобы они обработались далее
