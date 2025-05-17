@@ -25,6 +25,8 @@ import { VoiceModule } from './voice/voice.module';
       database: 'ai_bot',
       autoLoadEntities: true,
       synchronize: true,
+      // migrations: [__dirname + '/migrations/*{.ts,.js}'],
+      // migrationsRun: true,
     }),
     TelegramModule,
     OpenaiModule,
