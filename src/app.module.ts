@@ -24,6 +24,7 @@ import { VoiceModule } from './voice/voice.module';
       password: 'ai_pass',
       database: 'ai_bot',
       autoLoadEntities: true,
+      synchronize: true,
     }),
     TelegramModule,
     OpenaiModule,
