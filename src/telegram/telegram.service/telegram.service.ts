@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectBot } from 'nestjs-telegraf';
 import { Telegraf, Context, Markup } from 'telegraf';
+import * as QRCode from 'qrcode';
 import { OpenAiService } from 'src/openai/openai.service/openai.service';
 import { VoiceService } from 'src/voice/voice.service/voice.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -256,15 +257,17 @@ export class TelegramService {
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from);
+      const inviteLink = `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`;
+
+      // отправляем текстовое сообщение с ссылкой и кнопкой
       await ctx.reply(
-        `Ваш баланс: ${profile.tokens.tokens} токенов`,
-        Markup.inlineKeyboard([
-          Markup.button.url(
-            'Пригласительная ссылка',
-            `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`,
-          ),
-        ]),
+        `Ваш баланс: ${profile.tokens.tokens} токенов\nПригласительная ссылка: ${inviteLink}`,
+        Markup.inlineKeyboard([Markup.button.url('Перейти', inviteLink)]),
       );
+
+      // генерируем QR-код и отправляем его как фото
+      const qr = await QRCode.toBuffer(inviteLink);
+      await ctx.replyWithPhoto({ source: qr });
     };
 
     // команда для просмотра баланса и получения пригласительной ссылки
@@ -274,7 +277,13 @@ export class TelegramService {
 
     // обработка перехода по ссылке с кодом
     this.bot.start(async (ctx) => {
-      const payload = ctx.startPayload;
+      // ctx.startPayload помечен как устаревший,
+      // поэтому при необходимости извлекаем код из текста сообщения
+      const payload =
+        ctx.startPayload ??
+        (ctx.message && 'text' in ctx.message
+          ? ctx.message.text.replace('/start', '').trim()
+          : undefined);
       const exists = await this.profileRepo.findOne({
         where: { telegramId: String(ctx.from.id) },
       });
