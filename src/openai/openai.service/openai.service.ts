@@ -10,9 +10,9 @@ export class OpenAiService {
   private threadMap: Map<number, string> = new Map();
 
   constructor(private readonly configService: ConfigService) {
-    const rawKey = this.configService.get<string>('OPENAI_API_KEY');
+    const rawKey = this.configService.get<string>('OPENAI_API_KEY_PRO');
     if (!rawKey) {
-      throw new Error('Не задана переменная окружения OPENAI_API_KEY');
+      throw new Error('Не задана переменная окружения OPENAI_API_KEY_PRO');
     }
     this.logger.debug(`Raw OpenAI API key length: ${rawKey.length}`);
     this.logger.debug(
@@ -26,7 +26,7 @@ export class OpenAiService {
     this.logger.debug(`Sanitized OpenAI API key length: ${key.length}`);
 
     const baseURL =
-      this.configService.get<string>('OPENAI_BASE_URL')?.trim() ||
+      this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() ||
       'https://chat.neurolabtg.ru/v1';
 
     this.openAi = new OpenAI({

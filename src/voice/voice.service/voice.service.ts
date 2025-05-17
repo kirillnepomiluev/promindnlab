@@ -31,7 +31,7 @@ export class VoiceService {
   private readonly logger = new Logger(VoiceService.name);
   private readonly configService = new ConfigService();
   private readonly client = new OpenAI({
-    apiKey: this.configService.get<string>('OPENAI_API_KEY'),
+    apiKey: this.configService.get<string>('OPENAI_API_KEY_PRO'),
     baseURL: 'https://chat.neurolabtg.ru/v1',
   });
 
