@@ -54,6 +54,7 @@ export class TelegramService {
   private async findOrCreateProfile(
     from: { id: number; first_name?: string; username?: string },
     invitedBy?: string,
+    ctx?: Context,
   ): Promise<UserProfile> {
     let profile = await this.profileRepo.findOne({
       where: { telegramId: String(from.id) },
@@ -61,6 +62,7 @@ export class TelegramService {
     });
 
     const now = new Date();
+    let isNew = false;
     if (!profile) {
       const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: from.id } });
       profile = this.profileRepo.create({
@@ -72,6 +74,8 @@ export class TelegramService {
         invitedBy,
       });
       profile = await this.profileRepo.save(profile);
+
+      isNew = true;
 
       let tokens = this.tokensRepo.create({ userId: profile.id });
       tokens = await this.tokensRepo.save(tokens);
@@ -92,6 +96,12 @@ export class TelegramService {
       profile.userTokensId = tokens.id;
       await this.profileRepo.save(profile);
       profile.tokens = tokens;
+    }
+
+    if (isNew && ctx) {
+      await ctx.reply(
+        'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!',
+      );
     }
 
     return profile;
@@ -138,9 +148,10 @@ export class TelegramService {
       profile = await this.findOrCreateProfile(
         from,
         mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined,
+        ctx,
       );
     } else {
-      profile = await this.findOrCreateProfile(from);
+      profile = await this.findOrCreateProfile(from, undefined, ctx);
     }
 
     if (profile.tokens.tokens <= 0) {
@@ -299,7 +310,7 @@ export class TelegramService {
 
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
-      const profile = await this.findOrCreateProfile(ctx.message.from);
+      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
       await ctx.reply(
         `Ваш баланс: ${profile.tokens.tokens} токенов`,
         Markup.inlineKeyboard([
@@ -351,7 +362,7 @@ export class TelegramService {
     // подтверждение приглашения и создание профиля
     this.bot.action(/^confirm:(.+)/, async (ctx) => {
       const inviterId = ctx.match[1];
-      await this.findOrCreateProfile(ctx.from, inviterId);
+      await this.findOrCreateProfile(ctx.from, inviterId, ctx);
       this.pendingInvites.delete(ctx.from.id);
       await ctx.editMessageText('Регистрация завершена');
     });
@@ -359,7 +370,7 @@ export class TelegramService {
     this.bot.action('invite_link', async (ctx) => {
       await ctx.answerCbQuery();
 
-      const profile = await this.findOrCreateProfile(ctx.from);
+      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
       const inviteLink = `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`;
 
       const qr = await QRCode.toBuffer(inviteLink);
