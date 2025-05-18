@@ -193,7 +193,7 @@ export class TelegramService {
         if (!q) return;
 
         // пропускаем другие команды, кроме '/image', чтобы они обработались далее
-        if (q.startsWith('/') && !q.startsWith('/image')) {
+        if (q.startsWith('/') && !q.startsWith('/image') && !q.startsWith('/imagine')) {
           return next();
         }
 
@@ -291,6 +291,7 @@ export class TelegramService {
           );
           const answer = await this.openai.chat(text, ctx.message.from.id);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
+          //this.logger.debug(answer)
           if (answer.startsWith('/imagine')) {
             // Генерация изображения
             const drawMsg = await this.sendAnimation(
