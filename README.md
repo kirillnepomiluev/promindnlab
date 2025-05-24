@@ -87,3 +87,40 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
 ## Настройка Prettier
 
 Обновлена конфигурация Prettier: параметр "printWidth" установлен в значение 150, чтобы длинные импортные строки не переносились автоматически.
+
+## Развёртывание на удалённом сервере
+
+Ниже приведена примерная последовательность действий для настройки чистой Linux-системы и запуска проекта.
+
+1. Обновите пакеты и установите необходимые утилиты:
+   ```bash
+   sudo apt update && sudo apt upgrade -y
+   sudo apt install -y curl git docker-compose
+   ```
+2. Проверьте, установлены ли Node.js и npm:
+   ```bash
+   node -v
+   npm -v
+   ```
+   Если версии не отображаются или устарели, установите актуальный Node.js через `nvm`:
+   ```bash
+   curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.5/install.sh | bash
+   source ~/.nvm/nvm.sh
+   nvm install --lts
+   nvm use --lts
+   ```
+3. Склонируйте репозиторий и перейдите в каталог проекта. Скопируйте файл `example.env` в `.env` и заполните значения переменных.
+4. Установите зависимости и запустите контейнер с PostgreSQL (при необходимости):
+   ```bash
+   npm install
+   docker-compose up -d
+   ```
+5. Запустите тесты и соберите приложение:
+   ```bash
+   npm run test
+   npm run build
+   ```
+6. Для запуска в продакшене используйте команду:
+   ```bash
+   npm run start:prod
+   ```
