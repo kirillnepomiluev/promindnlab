@@ -316,7 +316,14 @@ export class TelegramService {
             );
             const ogg = await this.voice.textToSpeech(answer);
             await ctx.telegram.deleteMessage(ctx.chat.id, recordMsg.message_id);
-            await ctx.replyWithVoice({ source: ogg });
+            try {
+              // пробуем отправить голосовое сообщение
+              await ctx.replyWithVoice({ source: ogg });
+            } catch (err) {
+              // если голосовые сообщения запрещены, отправляем текстом
+              this.logger.warn('Голосовые сообщения запрещены', err);
+              await ctx.reply(answer);
+            }
           }
         }
       } catch (err) {
