@@ -11,6 +11,15 @@ import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 
+/**
+ * Стоимость различных типов запросов в токенах
+ */
+const TOKEN_COSTS = {
+  text: 1,
+  voice: 2,
+  image: 5,
+} as const;
+
 @Injectable()
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
@@ -130,7 +139,10 @@ export class TelegramService {
    * Также обновляет дату последнего сообщения и списывает один токен.
    * Возвращает профиль или null, если токены закончились.
    */
-  private async ensureUser(ctx: Context): Promise<UserProfile | null> {
+  private async ensureUser(
+    ctx: Context,
+    cost: number = TOKEN_COSTS.text,
+  ): Promise<UserProfile | null> {
     const from = ctx.message.from;
     // пробуем найти пользователя в локальной базе
     let profile = await this.profileRepo.findOne({
@@ -171,12 +183,12 @@ export class TelegramService {
       profile = await this.findOrCreateProfile(from, undefined, ctx);
     }
 
-    if (profile.tokens.tokens <= 0) {
-      await ctx.reply('Закончились токены - пополните');
+    if (profile.tokens.tokens < cost) {
+      await ctx.reply('Недостаточно токенов - пополните баланс');
       return null;
     }
 
-    profile.tokens.tokens -= 1;
+    profile.tokens.tokens -= cost;
     await this.tokensRepo.save(profile.tokens);
     return profile;
   }
@@ -188,7 +200,8 @@ export class TelegramService {
         if (q?.startsWith('/start')) {
           return next();
         }
-        const user = await this.ensureUser(ctx);
+        const cost = q && q.startsWith('/image') ? TOKEN_COSTS.image : TOKEN_COSTS.text;
+        const user = await this.ensureUser(ctx, cost);
         if (!user) return;
         if (!q) return;
 
@@ -254,7 +267,7 @@ export class TelegramService {
 
     this.bot.on('voice', async (ctx) => {
       try {
-        const user = await this.ensureUser(ctx);
+        const user = await this.ensureUser(ctx, TOKEN_COSTS.voice);
         if (!user) return;
         const tgVoice = ctx.message.voice;
         // показываем процесс распознавания голосового сообщения вместе с анимацией
@@ -334,7 +347,7 @@ export class TelegramService {
 
     this.bot.command('img', async (ctx) => {
       try {
-        const user = await this.ensureUser(ctx);
+        const user = await this.ensureUser(ctx, TOKEN_COSTS.image);
         if (!user) return;
         const prompt = ctx.message.text.replace('/img', '').trim();
         const placeholder = await this.sendAnimation(
@@ -381,6 +394,19 @@ export class TelegramService {
     this.bot.command('profile', profileHandler);
     // поддерживаем вариант без слеша
     this.bot.hears(/^profile$/i, profileHandler);
+
+    // Пополнение баланса токенов
+    this.bot.command('topup', async (ctx) => {
+      const amount = parseInt(ctx.message.text.replace('/topup', '').trim(), 10);
+      if (Number.isNaN(amount) || amount <= 0) {
+        await ctx.reply('Укажите количество токенов, например /topup 50');
+        return;
+      }
+      const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      profile.tokens.tokens += amount;
+      await this.tokensRepo.save(profile.tokens);
+      await ctx.reply(`Баланс пополнен на ${amount}. Текущий баланс: ${profile.tokens.tokens}`);
+    });
 
     // обработка перехода по ссылке с кодом
     this.bot.start(async (ctx) => {
