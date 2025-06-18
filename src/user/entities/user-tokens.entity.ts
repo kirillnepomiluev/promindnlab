@@ -15,6 +15,10 @@ export class UserTokens {
   @Column({ nullable: true })
   plan?: 'LITE' | 'PRO';
 
+  // Ожидаемый тип платежа: LITE, PRO или TOPUP
+  @Column({ nullable: true })
+  pendingPayment?: 'LITE' | 'PRO' | 'TOPUP';
+
   @Column()
   userId: number;
 

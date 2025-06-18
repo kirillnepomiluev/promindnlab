@@ -399,20 +399,56 @@ export class TelegramService {
       await ctx.answerCbQuery();
       const data = (ctx.callbackQuery as any).data as string;
       const plan = data === 'subscribe_LITE' ? 'LITE' : 'PRO';
+      const link =
+        plan === 'LITE'
+          ? 'https://www.finversia.ru/site/public/files/55/54676-donald_trump_president-of-usa.jpg'
+          : 'https://cdn.nur.kz/images/1200x675/c7aba7513c63b86f.jpeg?version=1';
+
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      profile.tokens.plan = plan as 'LITE' | 'PRO';
-      profile.tokens.tokens += plan === 'LITE' ? 1000 : 3500;
+      profile.tokens.pendingPayment = plan as 'LITE' | 'PRO';
       await this.tokensRepo.save(profile.tokens);
-      await ctx.editMessageText(`Подписка ${plan} активирована`);
+
+      await ctx.reply(
+        `Перейдите по ссылке для оплаты подписки ${plan}: ${link}`,
+        Markup.inlineKeyboard([Markup.button.callback('Я оплатил', `paid_${plan}`)]),
+      );
     });
 
     // пополнение баланса по активной подписке
     this.bot.action('topup', async (ctx) => {
       await ctx.answerCbQuery();
+      const link = 'https://img.rl0.ru/afisha/e1000x500i/daily.afisha.ru/uploads/images/3/1d/31d91ff715902c15bde808052fa02154.png';
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      profile.tokens.tokens += 1000;
+      profile.tokens.pendingPayment = 'TOPUP';
       await this.tokensRepo.save(profile.tokens);
-      await ctx.editMessageText('Баланс пополнен на 1000 токенов');
+
+      await ctx.reply(
+        `Перейдите по ссылке для пополнения баланса: ${link}`,
+        Markup.inlineKeyboard([Markup.button.callback('Я оплатил', 'paid_TOPUP')]),
+      );
+    });
+
+    // подтверждение оплаты
+    this.bot.action(['paid_LITE', 'paid_PRO', 'paid_TOPUP'], async (ctx) => {
+      await ctx.answerCbQuery();
+      const data = (ctx.callbackQuery as any).data as string;
+      const type = data.replace('paid_', '').toUpperCase();
+      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+      if (!profile.tokens.pendingPayment || profile.tokens.pendingPayment !== type) {
+        await ctx.reply('Нет ожидаемого платежа.');
+        return;
+      }
+      profile.tokens.pendingPayment = null;
+      if (type === 'LITE' || type === 'PRO') {
+        profile.tokens.plan = type as 'LITE' | 'PRO';
+        profile.tokens.tokens += type === 'LITE' ? 1000 : 3500;
+        await this.tokensRepo.save(profile.tokens);
+        await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
+      } else {
+        profile.tokens.tokens += 1000;
+        await this.tokensRepo.save(profile.tokens);
+        await ctx.editMessageText('На ваш счёт зачислено 1000 бонусов');
+      }
     });
 
     this.bot.catch((err, ctx) => {
