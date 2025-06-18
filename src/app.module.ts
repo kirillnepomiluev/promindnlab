@@ -11,9 +11,7 @@ import { VoiceModule } from './voice/voice.module';
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      envFilePath:
-        // process.env.NODE_ENV === 'development' ? 'development.env' :
-        '.env',
+      envFilePath: process.env.NODE_ENV === 'development' ? 'development.env' : '.env',
       expandVariables: true,
     }),
     // Подключение к локальной базе данных проекта
