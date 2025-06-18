@@ -184,6 +184,18 @@ export class TelegramService {
       profile = await this.findOrCreateProfile(from, undefined, ctx);
     }
 
+    if (profile.subscriptionUntil && profile.subscriptionUntil.getTime() <= Date.now()) {
+      if (profile.tokens.plan) {
+        profile.tokens.plan = null;
+        await this.tokensRepo.save(profile.tokens);
+      }
+      await ctx.reply(
+        'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nLITE 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
+        Markup.inlineKeyboard([Markup.button.callback('LITE', 'subscribe_LITE'), Markup.button.callback('PRO', 'subscribe_PRO')]),
+      );
+      return null;
+    }
+
     return profile;
   }
 
@@ -333,6 +345,17 @@ export class TelegramService {
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
+      if (profile.subscriptionUntil && profile.subscriptionUntil.getTime() <= Date.now()) {
+        if (profile.tokens.plan) {
+          profile.tokens.plan = null;
+          await this.tokensRepo.save(profile.tokens);
+        }
+        await ctx.reply(
+          'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nLITE 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
+          Markup.inlineKeyboard([Markup.button.callback('LITE', 'subscribe_LITE'), Markup.button.callback('PRO', 'subscribe_PRO')]),
+        );
+        return;
+      }
       const main = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
 
       const userParts = [] as string[];
@@ -355,8 +378,8 @@ export class TelegramService {
 
       const plan = profile.tokens.plan ?? 'нет';
       let until = '';
-      if (profile.tokens.plan && profile.tokens.subscriptionUntil) {
-        until = ' до ' + profile.tokens.subscriptionUntil.toLocaleDateString('ru-RU');
+      if (profile.tokens.plan && profile.subscriptionUntil) {
+        until = ' до ' + profile.subscriptionUntil.toLocaleDateString('ru-RU');
       }
 
       const message =
@@ -479,7 +502,10 @@ export class TelegramService {
         until.setDate(until.getDate() + 30);
         profile.tokens.dateSubscription = now;
         profile.tokens.subscriptionUntil = until;
+        profile.dateSubscription = now;
+        profile.subscriptionUntil = until;
         await this.tokensRepo.save(profile.tokens);
+        await this.profileRepo.save(profile);
         await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
       } else {
         profile.tokens.tokens += 1000;
