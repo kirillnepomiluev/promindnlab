@@ -15,8 +15,12 @@ import { MainUser } from 'src/external/entities/main-user.entity';
 export class TelegramService {
   private readonly logger = new Logger(TelegramService.name);
   // текст приветственного сообщения
-  private readonly welcomeMessage =
-    'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!';
+  private readonly welcomeMessage = 'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!';
+  // Стоимость операций в токенах
+  private readonly COST_TEXT = 1;
+  private readonly COST_IMAGE = 10;
+  private readonly COST_VOICE_RECOGNITION = 1;
+  private readonly COST_VOICE_REPLY_EXTRA = 3; // после распознавания
   // временное хранилище для незарегистрированных пользователей,
   // которые перешли по пригласительной ссылке
   private pendingInvites = new Map<number, string>();
@@ -46,17 +50,10 @@ export class TelegramService {
 
   // отправка анимации (GIF/MP4) из папки assets/animations
   // Отправка анимации вместе с текстом и возврат полученного сообщения
-  private async sendAnimation(
-    ctx: Context,
-    fileName: string,
-    caption?: string,
-  ) {
+  private async sendAnimation(ctx: Context, fileName: string, caption?: string) {
     const filePath = path.join(process.cwd(), 'assets', 'animations', fileName);
     // возвращаем сообщение, чтобы можно было удалить его позже
-    return ctx.replyWithAnimation(
-      { source: filePath },
-      caption ? { caption } : undefined,
-    );
+    return ctx.replyWithAnimation({ source: filePath }, caption ? { caption } : undefined);
   }
 
   // Получить ФИО пользователя из основной базы для отображения
@@ -65,6 +62,28 @@ export class TelegramService {
     if (user.firstName) parts.push(user.firstName);
     if (user.lastName) parts.push(user.lastName);
     return parts.join(' ').trim() || user.username || String(user.telegramId);
+  }
+
+  /** Списывает cost токенов. При нехватке выводит сообщение о подписке/пополнении */
+  private async chargeTokens(ctx: Context, profile: UserProfile, cost: number): Promise<boolean> {
+    if (profile.tokens.tokens < cost) {
+      if (!profile.tokens.plan) {
+        await ctx.reply(
+          'На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом приобретите подписку по одному из планов:\nLITE 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
+          Markup.inlineKeyboard([Markup.button.callback('LITE', 'subscribe_LITE'), Markup.button.callback('PRO', 'subscribe_PRO')]),
+        );
+      } else {
+        const price = profile.tokens.plan === 'LITE' ? 400 : 200;
+        await ctx.reply(
+          `На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом пополните баланс:\n${price} рублей - 1000 токенов`,
+          Markup.inlineKeyboard([Markup.button.callback('пополнить', 'topup')]),
+        );
+      }
+      return false;
+    }
+    profile.tokens.tokens -= cost;
+    await this.tokensRepo.save(profile.tokens);
+    return true;
   }
 
   /**
@@ -125,10 +144,8 @@ export class TelegramService {
   }
 
   /**
-   * Проверяет наличие пользователя в БД,
-   * создаёт профиль и токены при отсутствии.
-   * Также обновляет дату последнего сообщения и списывает один токен.
-   * Возвращает профиль или null, если токены закончились.
+   * Проверяет наличие пользователя в БД и при необходимости создаёт профиль.
+   * Возвращает профиль или null, если пользователь не подтвердил приглашение.
    */
   private async ensureUser(ctx: Context): Promise<UserProfile | null> {
     const from = ctx.message.from;
@@ -162,22 +179,11 @@ export class TelegramService {
         return null;
       }
 
-      profile = await this.findOrCreateProfile(
-        from,
-        mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined,
-        ctx,
-      );
+      profile = await this.findOrCreateProfile(from, mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined, ctx);
     } else {
       profile = await this.findOrCreateProfile(from, undefined, ctx);
     }
 
-    if (profile.tokens.tokens <= 0) {
-      await ctx.reply('Закончились токены - пополните');
-      return null;
-    }
-
-    profile.tokens.tokens -= 1;
-    await this.tokensRepo.save(profile.tokens);
     return profile;
   }
 
@@ -198,16 +204,10 @@ export class TelegramService {
         }
 
         if (q.startsWith('/image')) {
-          // Генерация изображения
-          // отправляем сообщение-заглушку с анимацией
-          const placeholder = await this.sendAnimation(
-            ctx,
-            'drawing_a.mp4',
-            'РИСУЮ ...',
-          );
+          if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
+          const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = q.replace('/image', '').trim();
           const image = await this.openai.generateImage(prompt);
-          // удаляем сообщение-заглушку с анимацией
           await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
@@ -217,22 +217,13 @@ export class TelegramService {
         } else {
           // Текстовый чат
           // показываем пользователю, что мы "думаем" над ответом
-          const thinkingMsg = await this.sendAnimation(
-            ctx,
-            'thinking_pen_a.mp4',
-            'ДУМАЮ ...',
-          );
+          const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
           const answer = await this.openai.chat(q, ctx.message.from.id);
-          // удаляем сообщение с анимацией "думаю"
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
           if (answer.startsWith('/imagine')) {
-            // если ответ подразумевает генерацию изображения
-            const drawMsg = await this.sendAnimation(
-              ctx,
-              'drawing_a.mp4',
-              'РИСУЮ ...',
-            );
+            if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
+            const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
             const prompt = answer.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
             await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
@@ -242,7 +233,7 @@ export class TelegramService {
               await ctx.reply('Не удалось сгенерировать изображение');
             }
           } else {
-            // отправляем готовый ответ отдельным сообщением
+            if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
             await ctx.reply(answer);
           }
         }
@@ -256,25 +247,17 @@ export class TelegramService {
       try {
         const user = await this.ensureUser(ctx);
         if (!user) return;
+        if (!(await this.chargeTokens(ctx, user, this.COST_VOICE_RECOGNITION))) return;
         const tgVoice = ctx.message.voice;
-        // показываем процесс распознавания голосового сообщения вместе с анимацией
-        const listenMsg = await this.sendAnimation(
-          ctx,
-          'listen_a.mp4',
-          'СЛУШАЮ ...',
-        );
+        const listenMsg = await this.sendAnimation(ctx, 'listen_a.mp4', 'СЛУШАЮ ...');
         const text = await this.voice.voiceToText(tgVoice);
         await ctx.telegram.deleteMessage(ctx.chat.id, listenMsg.message_id);
         if (!text) return;
 
         const cleaned = text.trim().toLowerCase();
         if (cleaned.startsWith('нарисуй') || cleaned.startsWith('imagine')) {
-          // Генерация изображения по голосовому сообщению
-          const placeholder = await this.sendAnimation(
-            ctx,
-            'drawing_a.mp4',
-            'РИСУЮ ...',
-          );
+          if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
+          const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const image = await this.openai.generateImage(text);
           await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
@@ -283,22 +266,12 @@ export class TelegramService {
             await ctx.reply('Не удалось сгенерировать изображение по голосовому сообщению');
           }
         } else {
-          // Текстовый ответ
-          const thinkingMsg = await this.sendAnimation(
-            ctx,
-            'thinking_pen_a.mp4',
-            'ДУМАЮ ...',
-          );
+          const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
           const answer = await this.openai.chat(text, ctx.message.from.id);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
-          //this.logger.debug(answer)
           if (answer.startsWith('/imagine')) {
-            // Генерация изображения
-            const drawMsg = await this.sendAnimation(
-              ctx,
-              'drawing_a.mp4',
-              'РИСУЮ ...',
-            );
+            if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
+            const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
             const prompt = answer.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
             await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
@@ -308,19 +281,13 @@ export class TelegramService {
               await ctx.reply('Не удалось сгенерировать изображение');
             }
           } else {
-            // озвучиваем ответ
-            const recordMsg = await this.sendAnimation(
-              ctx,
-              'play_a.mp4',
-              'ЗАПИСЫВАЮ ...',
-            );
+            if (!(await this.chargeTokens(ctx, user, this.COST_VOICE_REPLY_EXTRA))) return;
+            const recordMsg = await this.sendAnimation(ctx, 'play_a.mp4', 'ЗАПИСЫВАЮ ...');
             const ogg = await this.voice.textToSpeech(answer);
             await ctx.telegram.deleteMessage(ctx.chat.id, recordMsg.message_id);
             try {
-              // пробуем отправить голосовое сообщение
               await ctx.replyWithVoice({ source: ogg });
             } catch (err) {
-              // если голосовые сообщения запрещены, отправляем текстом
               this.logger.warn('Голосовые сообщения запрещены', err);
               await ctx.reply(answer);
             }
@@ -336,12 +303,9 @@ export class TelegramService {
       try {
         const user = await this.ensureUser(ctx);
         if (!user) return;
+        if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
         const prompt = ctx.message.text.replace('/img', '').trim();
-        const placeholder = await this.sendAnimation(
-          ctx,
-          'drawing_a.mp4',
-          'РИСУЮ ...',
-        );
+        const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
         const image = await this.openai.generateImage(prompt);
         await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
         if (image) {
@@ -371,9 +335,7 @@ export class TelegramService {
       const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
       await ctx.reply(
         `Ваш баланс: ${profile.tokens.tokens} токенов`,
-        Markup.inlineKeyboard([
-          Markup.button.callback('Получить ссылку', 'invite_link'),
-        ]),
+        Markup.inlineKeyboard([Markup.button.callback('Получить ссылку', 'invite_link')]),
       );
     };
 
@@ -386,11 +348,7 @@ export class TelegramService {
     this.bot.start(async (ctx) => {
       // ctx.startPayload помечен как устаревший,
       // поэтому при необходимости извлекаем код из текста сообщения
-      const payload =
-        ctx.startPayload ??
-        (ctx.message && 'text' in ctx.message
-          ? ctx.message.text.replace('/start', '').trim()
-          : undefined);
+      const payload = ctx.startPayload ?? (ctx.message && 'text' in ctx.message ? ctx.message.text.replace('/start', '').trim() : undefined);
       const exists = await this.profileRepo.findOne({
         where: { telegramId: String(ctx.from.id) },
       });
@@ -434,6 +392,27 @@ export class TelegramService {
       const qr = await QRCode.toBuffer(inviteLink);
       // Отправляем QR-код и текст с ссылкой одним сообщением
       await ctx.replyWithPhoto({ source: qr }, { caption: `Пригласительная ссылка: ${inviteLink}` });
+    });
+
+    // оформление подписки
+    this.bot.action(['subscribe_LITE', 'subscribe_PRO'], async (ctx) => {
+      await ctx.answerCbQuery();
+      const data = (ctx.callbackQuery as any).data as string;
+      const plan = data === 'subscribe_LITE' ? 'LITE' : 'PRO';
+      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+      profile.tokens.plan = plan as 'LITE' | 'PRO';
+      profile.tokens.tokens += plan === 'LITE' ? 1000 : 3500;
+      await this.tokensRepo.save(profile.tokens);
+      await ctx.editMessageText(`Подписка ${plan} активирована`);
+    });
+
+    // пополнение баланса по активной подписке
+    this.bot.action('topup', async (ctx) => {
+      await ctx.answerCbQuery();
+      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+      profile.tokens.tokens += 1000;
+      await this.tokensRepo.save(profile.tokens);
+      await ctx.editMessageText('Баланс пополнен на 1000 токенов');
     });
 
     this.bot.catch((err, ctx) => {

@@ -11,6 +11,10 @@ export class UserTokens {
   @Column({ default: 100 })
   tokens: number;
 
+  // Тарифный план пользователя: LITE или PRO
+  @Column({ nullable: true })
+  plan?: 'LITE' | 'PRO';
+
   @Column()
   userId: number;
 
