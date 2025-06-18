@@ -19,6 +19,14 @@ export class UserTokens {
   @Column({ nullable: true })
   pendingPayment?: 'LITE' | 'PRO' | 'TOPUP';
 
+  // Дата начала оплаченного периода
+  @Column({ type: 'timestamptz', nullable: true })
+  dateSubscription?: Date;
+
+  // Дата окончания подписки (через 30 дней после оплаты)
+  @Column({ type: 'timestamptz', nullable: true })
+  subscriptionUntil?: Date;
+
   @Column()
   userId: number;
 

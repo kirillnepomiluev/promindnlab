@@ -333,10 +333,37 @@ export class TelegramService {
     // общая функция-обработчик команды /profile и текста "profile"
     const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
-      await ctx.reply(
-        `Ваш баланс: ${profile.tokens.tokens} токенов`,
-        Markup.inlineKeyboard([Markup.button.callback('Получить ссылку', 'invite_link')]),
-      );
+      const main = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      const userParts = [] as string[];
+      if (main?.firstName || profile.firstName) userParts.push(main?.firstName ?? profile.firstName);
+      if (main?.lastName) userParts.push(main.lastName);
+      if (main?.username || profile.username) userParts.push(main?.username ?? profile.username);
+      const userInfo = userParts.join(' ').trim();
+
+      let sponsorInfo = 'не указан';
+      if (profile.invitedBy) {
+        const sponsor = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.invitedBy) } });
+        if (sponsor) {
+          const sponsorParts = [] as string[];
+          if (sponsor.firstName) sponsorParts.push(sponsor.firstName);
+          if (sponsor.lastName) sponsorParts.push(sponsor.lastName);
+          if (sponsor.username) sponsorParts.push(sponsor.username);
+          sponsorInfo = sponsorParts.join(' ').trim() || sponsorInfo;
+        }
+      }
+
+      const plan = profile.tokens.plan ?? 'нет';
+
+      const message =
+        `Данные пользователя: <b>${userInfo}</b>\n` +
+        `Данные спонсора: <b>${sponsorInfo}</b>\n` +
+        `Текущий тарифный план: <b>${plan}</b>\n` +
+        `Ваш баланс: <b>${profile.tokens.tokens} токенов</b>`;
+
+      await ctx.reply(message, {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([Markup.button.callback('Получить ссылку', 'invite_link')]),
+      });
     };
 
     // команда для просмотра баланса и получения пригласительной ссылки
@@ -442,6 +469,11 @@ export class TelegramService {
       if (type === 'LITE' || type === 'PRO') {
         profile.tokens.plan = type as 'LITE' | 'PRO';
         profile.tokens.tokens += type === 'LITE' ? 1000 : 3500;
+        const now = new Date();
+        const until = new Date(now);
+        until.setDate(until.getDate() + 30);
+        profile.tokens.dateSubscription = now;
+        profile.tokens.subscriptionUntil = until;
         await this.tokensRepo.save(profile.tokens);
         await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
       } else {
