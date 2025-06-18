@@ -334,6 +334,7 @@ export class TelegramService {
     const profileHandler = async (ctx: Context) => {
       const profile = await this.findOrCreateProfile(ctx.message.from, undefined, ctx);
       const main = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+
       const userParts = [] as string[];
       if (main?.firstName || profile.firstName) userParts.push(main?.firstName ?? profile.firstName);
       if (main?.lastName) userParts.push(main.lastName);
@@ -341,8 +342,8 @@ export class TelegramService {
       const userInfo = userParts.join(' ').trim();
 
       let sponsorInfo = 'не указан';
-      if (profile.invitedBy) {
-        const sponsor = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.invitedBy) } });
+      if (main?.telegramIdOfReferall) {
+        const sponsor = await this.mainUserRepo.findOne({ where: { telegramId: Number(main.telegramIdOfReferall) } });
         if (sponsor) {
           const sponsorParts = [] as string[];
           if (sponsor.firstName) sponsorParts.push(sponsor.firstName);
@@ -353,11 +354,15 @@ export class TelegramService {
       }
 
       const plan = profile.tokens.plan ?? 'нет';
+      let until = '';
+      if (profile.tokens.plan && profile.tokens.subscriptionUntil) {
+        until = ' до ' + profile.tokens.subscriptionUntil.toLocaleDateString('ru-RU');
+      }
 
       const message =
         `Данные пользователя: <b>${userInfo}</b>\n` +
         `Данные спонсора: <b>${sponsorInfo}</b>\n` +
-        `Текущий тарифный план: <b>${plan}</b>\n` +
+        `Текущий тарифный план: <b>${plan}</b>${until}\n` +
         `Ваш баланс: <b>${profile.tokens.tokens} токенов</b>`;
 
       await ctx.reply(message, {
