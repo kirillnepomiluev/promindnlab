@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { TelegramModule } from './telegram/telegram.module';
 import { OpenaiModule } from './openai/openai.module';
@@ -15,29 +15,35 @@ import { VoiceModule } from './voice/voice.module';
       expandVariables: true,
     }),
     // Подключение к локальной базе данных проекта
-    TypeOrmModule.forRoot({
-      type: 'postgres',
-      host: process.env.DATABASE_HOST,
-      port: Number(process.env.DATABASE_PORT),
-      username: process.env.DB_USER,
-      password: process.env.DB_PASS,
-      database: process.env.DB_NAME,
-      autoLoadEntities: true,
-      synchronize: true,
-      // migrations: [__dirname + '/migrations/*{.ts,.js}'],
-      // migrationsRun: true,
+    TypeOrmModule.forRootAsync({
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        type: 'postgres',
+        host: cfg.get<string>('DATABASE_HOST'),
+        port: Number(cfg.get<string>('DATABASE_PORT')),
+        username: cfg.get<string>('DB_USER'),
+        password: cfg.get<string>('DB_PASS'),
+        database: cfg.get<string>('DB_NAME'),
+        autoLoadEntities: true,
+        synchronize: true,
+        // migrations: [__dirname + '/migrations/*{.ts,.js}'],
+        // migrationsRun: true,
+      }),
     }),
     // Подключение к основной базе данных проекта
-    TypeOrmModule.forRoot({
+    TypeOrmModule.forRootAsync({
       name: 'mainDb',
-      type: 'postgres',
-      host: process.env.MAIN_DB_HOST,
-      port: Number(process.env.MAIN_DB_PORT),
-      username: process.env.MAIN_DB_USER,
-      password: process.env.MAIN_DB_PASS,
-      database: process.env.MAIN_DB_NAME,
-      entities: [__dirname + '/**/*.entity{.ts,.js}'],
-      synchronize: false,
+      inject: [ConfigService],
+      useFactory: (cfg: ConfigService) => ({
+        type: 'postgres',
+        host: cfg.get<string>('MAIN_DB_HOST'),
+        port: Number(cfg.get<string>('MAIN_DB_PORT')),
+        username: cfg.get<string>('MAIN_DB_USER'),
+        password: cfg.get<string>('MAIN_DB_PASS'),
+        database: cfg.get<string>('MAIN_DB_NAME'),
+        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        synchronize: false,
+      }),
     }),
     TelegramModule,
     OpenaiModule,

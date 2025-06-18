@@ -12,7 +12,6 @@ import { MainUser } from '../external/entities/main-user.entity';
 // telegram.module.ts
 @Module({
   imports: [
-    ConfigModule.forRoot({ isGlobal: true }), // .env грузится глобально
     TelegrafModule.forRootAsync({
       inject: [ConfigService],
       useFactory: (cfg: ConfigService) => ({
