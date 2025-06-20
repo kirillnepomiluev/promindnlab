@@ -11,6 +11,22 @@ export class UserTokens {
   @Column({ default: 100 })
   tokens: number;
 
+  // Тарифный план пользователя: LITE или PRO
+  @Column({ nullable: true })
+  plan?: 'LITE' | 'PRO';
+
+  // Ожидаемый тип платежа: LITE, PRO или TOPUP
+  @Column({ nullable: true })
+  pendingPayment?: 'LITE' | 'PRO' | 'TOPUP';
+
+  // Дата начала оплаченного периода
+  @Column({ type: 'timestamptz', nullable: true })
+  dateSubscription?: Date;
+
+  // Дата окончания подписки (через 30 дней после оплаты)
+  @Column({ type: 'timestamptz', nullable: true })
+  subscriptionUntil?: Date;
+
   @Column()
   userId: number;
 
