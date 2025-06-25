@@ -33,6 +33,19 @@ export class TelegramService {
     private readonly mainUserRepo: Repository<MainUser>,
   ) {
     this.registerHandlers();
+    this.setPartnerMenu();
+  }
+
+  private async setPartnerMenu() {
+    const url = process.env.PARTNER_PROGRAM_URL;
+    if (!url) return;
+    await this.bot.telegram.setChatMenuButton({
+      menuButton: {
+        type: 'web_app',
+        text: 'Партнёрская программа',
+        web_app: { url },
+      },
+    });
   }
   private async sendPhoto(ctx: Context, image: string | Buffer) {
     if (Buffer.isBuffer(image)) {
