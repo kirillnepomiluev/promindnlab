@@ -478,7 +478,7 @@ export class TelegramService {
       await this.orderRepo.save(order);
 
       const botLink = `https://t.me/test_NLab_bot?start=pay_${plan}`;
-      await ctx.reply(
+      await ctx.editMessageText(
         `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
         Markup.inlineKeyboard([
           Markup.button.url('Открыть', botLink),
