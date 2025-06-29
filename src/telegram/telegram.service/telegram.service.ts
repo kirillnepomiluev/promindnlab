@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
+import { MainOrder } from 'src/external/entities/order.entity';
 
 @Injectable()
 export class TelegramService {
@@ -35,6 +36,8 @@ export class TelegramService {
     private readonly tokensRepo: Repository<UserTokens>,
     @InjectRepository(MainUser, 'mainDb')
     private readonly mainUserRepo: Repository<MainUser>,
+    @InjectRepository(MainOrder, 'mainDb')
+    private readonly orderRepo: Repository<MainOrder>,
   ) {
     this.registerHandlers();
   }
@@ -462,6 +465,17 @@ export class TelegramService {
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
       profile.tokens.pendingPayment = plan as 'LITE' | 'PRO';
       await this.tokensRepo.save(profile.tokens);
+
+      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      if (mainUser) {
+        const order = this.orderRepo.create({
+          status: 'Pending',
+          totalAmount: plan === 'LITE' ? 2000 : 5000,
+          totalPoints: 1,
+          userId: mainUser.id,
+        });
+        await this.orderRepo.save(order);
+      }
 
       await ctx.reply(
         `Перейдите по ссылке для оплаты подписки ${plan}: ${link}`,
