@@ -469,6 +469,31 @@ export class TelegramService {
       profile.tokens.pendingPayment = plan as 'LITE' | 'PRO';
       await this.tokensRepo.save(profile.tokens);
 
+      await ctx.editMessageText(
+        `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
+        Markup.inlineKeyboard([
+          Markup.button.callback('Открыть', `open_pay_${plan}`),
+        ]),
+      );
+    });
+
+    this.bot.action(/^open_pay_(LITE|PRO)$/, async (ctx) => {
+      await ctx.answerCbQuery();
+      const plan = ctx.match[1] as 'LITE' | 'PRO';
+
+      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+
+      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      if (!mainUser) {
+        await ctx.reply('вы не авторизованы, получите приглашение у своего спонсора');
+        return;
+      }
+
+      if (profile.tokens.pendingPayment !== plan) {
+        profile.tokens.pendingPayment = plan;
+        await this.tokensRepo.save(profile.tokens);
+      }
+
       const order = this.orderRepo.create({
         status: 'Pending',
         totalAmount: plan === 'LITE' ? 2000 : 5000,
