@@ -457,29 +457,33 @@ export class TelegramService {
       await ctx.answerCbQuery();
       const data = (ctx.callbackQuery as any).data as string;
       const plan = data === 'subscribe_LITE' ? 'LITE' : 'PRO';
-      const link =
-        plan === 'LITE'
-          ? 'https://www.finversia.ru/site/public/files/55/54676-donald_trump_president-of-usa.jpg'
-          : 'https://cdn.nur.kz/images/1200x675/c7aba7513c63b86f.jpeg?version=1';
 
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+
+      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      if (!mainUser) {
+        await ctx.reply('вы не авторизованы, получите приглашение у своего спонсора');
+        return;
+      }
+
       profile.tokens.pendingPayment = plan as 'LITE' | 'PRO';
       await this.tokensRepo.save(profile.tokens);
 
-      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
-      if (mainUser) {
-        const order = this.orderRepo.create({
-          status: 'Pending',
-          totalAmount: plan === 'LITE' ? 2000 : 5000,
-          totalPoints: 1,
-          userId: mainUser.id,
-        });
-        await this.orderRepo.save(order);
-      }
+      const order = this.orderRepo.create({
+        status: 'Pending',
+        totalAmount: plan === 'LITE' ? 2000 : 5000,
+        totalPoints: 1,
+        userId: mainUser.id,
+      });
+      await this.orderRepo.save(order);
 
+      const botLink = `https://t.me/test_NLab_bot?start=pay_${plan}`;
       await ctx.reply(
-        `Перейдите по ссылке для оплаты подписки ${plan}: ${link}`,
-        Markup.inlineKeyboard([Markup.button.callback('Я оплатил', `paid_${plan}`)]),
+        `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
+        Markup.inlineKeyboard([
+          Markup.button.url('Открыть', botLink),
+          Markup.button.callback('Я оплатил', `paid_${plan}`),
+        ]),
       );
     });
 
