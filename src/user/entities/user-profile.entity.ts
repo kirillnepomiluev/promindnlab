@@ -1,5 +1,13 @@
-import { Column, Entity, OneToOne, JoinColumn, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Column,
+  Entity,
+  OneToOne,
+  JoinColumn,
+  PrimaryGeneratedColumn,
+  OneToMany,
+} from 'typeorm';
 import { UserTokens } from './user-tokens.entity';
+import { TokenTransaction } from './token-transaction.entity';
 
 // Сущность профиля пользователя в Telegram
 
@@ -44,4 +52,7 @@ export class UserProfile {
   @OneToOne(() => UserTokens, (tokens) => tokens.user, { cascade: true })
   @JoinColumn({ name: 'userTokensId' })
   tokens: UserTokens;
+
+  @OneToMany(() => TokenTransaction, (tx) => tx.user)
+  transactions: TokenTransaction[];
 }

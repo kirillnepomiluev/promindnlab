@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
+import { TokenTransaction } from 'src/user/entities/token-transaction.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 import { MainOrder } from 'src/external/entities/order.entity';
 
@@ -34,12 +35,30 @@ export class TelegramService {
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
     private readonly tokensRepo: Repository<UserTokens>,
+    @InjectRepository(TokenTransaction)
+    private readonly txRepo: Repository<TokenTransaction>,
     @InjectRepository(MainUser, 'mainDb')
     private readonly mainUserRepo: Repository<MainUser>,
     @InjectRepository(MainOrder, 'mainDb')
     private readonly orderRepo: Repository<MainOrder>,
   ) {
     this.registerHandlers();
+  }
+
+  // Создаёт запись о движении токенов
+  private async addTransaction(
+    profile: UserProfile,
+    amount: number,
+    type: 'DEBIT' | 'CREDIT',
+    comment?: string,
+  ) {
+    const tx = this.txRepo.create({
+      userId: profile.id,
+      amount,
+      type,
+      comment,
+    });
+    await this.txRepo.save(tx);
   }
   private async sendPhoto(ctx: Context, image: string | Buffer) {
     if (Buffer.isBuffer(image)) {
@@ -91,6 +110,7 @@ export class TelegramService {
     }
     profile.tokens.tokens -= cost;
     await this.tokensRepo.save(profile.tokens);
+    await this.addTransaction(profile, cost, 'DEBIT');
     return true;
   }
 
@@ -128,6 +148,7 @@ export class TelegramService {
       profile.userTokensId = tokens.id;
       await this.profileRepo.save(profile);
       profile.tokens = tokens;
+      await this.addTransaction(profile, tokens.tokens, 'CREDIT', 'initial balance');
     } else {
       profile.lastMessageAt = now;
       await this.profileRepo.save(profile);
@@ -142,6 +163,7 @@ export class TelegramService {
       profile.userTokensId = tokens.id;
       await this.profileRepo.save(profile);
       profile.tokens = tokens;
+      await this.addTransaction(profile, tokens.tokens, 'CREDIT', 'initial balance');
     }
 
     if (isNew && ctx) {
@@ -550,7 +572,8 @@ export class TelegramService {
       profile.tokens.pendingPayment = null;
       if (type === 'LITE' || type === 'PRO') {
         profile.tokens.plan = type as 'LITE' | 'PRO';
-        profile.tokens.tokens += type === 'LITE' ? 1000 : 3500;
+        const add = type === 'LITE' ? 1000 : 3500;
+        profile.tokens.tokens += add;
         const now = new Date();
         const until = new Date(now);
         until.setDate(until.getDate() + 30);
@@ -560,10 +583,13 @@ export class TelegramService {
         profile.subscriptionUntil = until;
         await this.tokensRepo.save(profile.tokens);
         await this.profileRepo.save(profile);
+        await this.addTransaction(profile, add, 'CREDIT', `subscription ${type}`);
         await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
       } else {
-        profile.tokens.tokens += 1000;
+        const add = 1000;
+        profile.tokens.tokens += add;
         await this.tokensRepo.save(profile.tokens);
+        await this.addTransaction(profile, add, 'CREDIT', 'balance topup');
         await ctx.editMessageText('На ваш счёт зачислено 1000 бонусов');
       }
     });
