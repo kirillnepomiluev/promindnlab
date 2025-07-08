@@ -7,6 +7,7 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { UserProfile } from '../user/entities/user-profile.entity';
 import { UserTokens } from '../user/entities/user-tokens.entity';
+import { TokenTransaction } from '../user/entities/token-transaction.entity';
 import { MainUser } from '../external/entities/main-user.entity';
 import { MainOrder } from '../external/entities/order.entity';
 
@@ -21,7 +22,7 @@ import { MainOrder } from '../external/entities/order.entity';
       }),
     }),
     // Регистрируем репозитории для локальной и основной БД
-    TypeOrmModule.forFeature([UserProfile, UserTokens]),
+    TypeOrmModule.forFeature([UserProfile, UserTokens, TokenTransaction]),
     TypeOrmModule.forFeature([MainUser, MainOrder], 'mainDb'),
     OpenaiModule,
     VoiceModule,
