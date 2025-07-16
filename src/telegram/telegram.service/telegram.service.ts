@@ -10,6 +10,7 @@ import { Repository } from 'typeorm';
 import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
 import { TokenTransaction } from 'src/user/entities/token-transaction.entity';
+import { OrderIncome } from 'src/user/entities/order-income.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 import { MainOrder } from 'src/external/entities/order.entity';
 
@@ -37,6 +38,8 @@ export class TelegramService {
     private readonly tokensRepo: Repository<UserTokens>,
     @InjectRepository(TokenTransaction)
     private readonly txRepo: Repository<TokenTransaction>,
+    @InjectRepository(OrderIncome)
+    private readonly incomeRepo: Repository<OrderIncome>,
     @InjectRepository(MainUser, 'mainDb')
     private readonly mainUserRepo: Repository<MainUser>,
     @InjectRepository(MainOrder, 'mainDb')
@@ -51,12 +54,14 @@ export class TelegramService {
     amount: number,
     type: 'DEBIT' | 'CREDIT',
     comment?: string,
+    orderIncomeId?: number,
   ) {
     const tx = this.txRepo.create({
       userId: profile.id,
       amount,
       type,
       comment,
+      orderIncomeId,
     });
     await this.txRepo.save(tx);
   }
@@ -84,6 +89,54 @@ export class TelegramService {
     if (user.firstName) parts.push(user.firstName);
     if (user.lastName) parts.push(user.lastName);
     return parts.join(' ').trim() || user.username || String(user.telegramId);
+  }
+
+  // Проверка оплаченных заказов в основной базе и начисление токенов
+  private async syncPaidOrders(profile: UserProfile) {
+    const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+    if (!mainUser) return;
+
+    const orders = await this.orderRepo.find({ where: { userId: mainUser.id, promind: true } });
+    for (const order of orders) {
+      const exists = await this.incomeRepo.findOne({ where: { orderId: order.id } });
+      if (exists) continue;
+
+      let tokens = 0;
+      let comment = '';
+      if (order.totalAmount === 2000) {
+        tokens = 1000;
+        comment = 'subscription LITE';
+        profile.tokens.plan = 'LITE';
+        const now = new Date();
+        const until = new Date(now);
+        until.setDate(until.getDate() + 30);
+        profile.tokens.dateSubscription = now;
+        profile.tokens.subscriptionUntil = until;
+        profile.dateSubscription = now;
+        profile.subscriptionUntil = until;
+      } else if (order.totalAmount === 5000) {
+        tokens = 3500;
+        comment = 'subscription PRO';
+        profile.tokens.plan = 'PRO';
+        const now = new Date();
+        const until = new Date(now);
+        until.setDate(until.getDate() + 30);
+        profile.tokens.dateSubscription = now;
+        profile.tokens.subscriptionUntil = until;
+        profile.dateSubscription = now;
+        profile.subscriptionUntil = until;
+      } else {
+        tokens = 1000;
+        comment = 'balance topup';
+      }
+
+      profile.tokens.tokens += tokens;
+      await this.tokensRepo.save(profile.tokens);
+      await this.profileRepo.save(profile);
+
+      const income = await this.incomeRepo.save(this.incomeRepo.create({ orderId: order.id, userId: profile.id, tokens }));
+      await this.addTransaction(profile, tokens, 'CREDIT', comment, income.id);
+    }
   }
 
   /** Списывает cost токенов. При нехватке выводит сообщение о подписке/пополнении */
@@ -540,7 +593,7 @@ export class TelegramService {
         `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
         Markup.inlineKeyboard([
           Markup.button.url('Открыть', botLink),
-          Markup.button.callback('Я оплатил', `paid_${plan}`),
+          Markup.button.callback('Оплачено', `paid_${plan}`),
         ]),
       );
     });
@@ -555,43 +608,18 @@ export class TelegramService {
 
       await ctx.reply(
         `Перейдите по ссылке для пополнения баланса: ${link}`,
-        Markup.inlineKeyboard([Markup.button.callback('Я оплатил', 'paid_TOPUP')]),
+        Markup.inlineKeyboard([Markup.button.callback('Оплачено', 'paid_TOPUP')]),
       );
     });
 
     // подтверждение оплаты
     this.bot.action(['paid_LITE', 'paid_PRO', 'paid_TOPUP'], async (ctx) => {
       await ctx.answerCbQuery();
-      const data = (ctx.callbackQuery as any).data as string;
-      const type = data.replace('paid_', '').toUpperCase();
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      if (!profile.tokens.pendingPayment || profile.tokens.pendingPayment !== type) {
-        await ctx.reply('Нет ожидаемого платежа.');
-        return;
-      }
       profile.tokens.pendingPayment = null;
-      if (type === 'LITE' || type === 'PRO') {
-        profile.tokens.plan = type as 'LITE' | 'PRO';
-        const add = type === 'LITE' ? 1000 : 3500;
-        profile.tokens.tokens += add;
-        const now = new Date();
-        const until = new Date(now);
-        until.setDate(until.getDate() + 30);
-        profile.tokens.dateSubscription = now;
-        profile.tokens.subscriptionUntil = until;
-        profile.dateSubscription = now;
-        profile.subscriptionUntil = until;
-        await this.tokensRepo.save(profile.tokens);
-        await this.profileRepo.save(profile);
-        await this.addTransaction(profile, add, 'CREDIT', `subscription ${type}`);
-        await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
-      } else {
-        const add = 1000;
-        profile.tokens.tokens += add;
-        await this.tokensRepo.save(profile.tokens);
-        await this.addTransaction(profile, add, 'CREDIT', 'balance topup');
-        await ctx.editMessageText('На ваш счёт зачислено 1000 бонусов');
-      }
+      await this.tokensRepo.save(profile.tokens);
+      await this.syncPaidOrders(profile);
+      await ctx.editMessageText('Платёж проверен');
     });
 
     this.bot.catch((err, ctx) => {
