@@ -19,6 +19,10 @@ export class TokenTransaction {
   @Column({ nullable: true })
   comment?: string;
 
+  // Ссылка на запись о заказе в таблице orders_income
+  @Column({ nullable: true })
+  orderIncomeId?: number;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
