@@ -11,13 +11,13 @@ export class UserTokens {
   @Column({ default: 100 })
   tokens: number;
 
-  // Тарифный план пользователя: LITE или PRO
+  // Тарифный план пользователя: PLUS или PRO
   @Column({ nullable: true })
-  plan?: 'LITE' | 'PRO';
+  plan?: 'PLUS' | 'PRO';
 
-  // Ожидаемый тип платежа: LITE, PRO или TOPUP
+  // Ожидаемый тип платежа: PLUS, PRO или TOPUP
   @Column({ nullable: true })
-  pendingPayment?: 'LITE' | 'PRO' | 'TOPUP';
+  pendingPayment?: 'PLUS' | 'PRO' | 'TOPUP';
 
   // Дата начала оплаченного периода
   @Column({ type: 'timestamptz', nullable: true })
