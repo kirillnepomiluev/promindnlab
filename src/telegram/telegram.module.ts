@@ -11,6 +11,7 @@ import { TokenTransaction } from '../user/entities/token-transaction.entity';
 import { OrderIncome } from '../user/entities/order-income.entity';
 import { MainUser } from '../external/entities/main-user.entity';
 import { MainOrder } from '../external/entities/order.entity';
+import { MainOrderItem } from '../external/entities/order-item.entity';
 
 // telegram.module.ts
 @Module({
@@ -24,7 +25,7 @@ import { MainOrder } from '../external/entities/order.entity';
     }),
     // Регистрируем репозитории для локальной и основной БД
     TypeOrmModule.forFeature([UserProfile, UserTokens, TokenTransaction, OrderIncome]),
-    TypeOrmModule.forFeature([MainUser, MainOrder], 'mainDb'),
+    TypeOrmModule.forFeature([MainUser, MainOrder, MainOrderItem], 'mainDb'),
     OpenaiModule,
     VoiceModule,
   ],
