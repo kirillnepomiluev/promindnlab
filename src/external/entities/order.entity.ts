@@ -1,4 +1,5 @@
 import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { PromindAction } from '../../constants/promind-action.enum';
 
 // Order record from main project
 @Entity({ name: 'orders' })
@@ -23,5 +24,5 @@ export class MainOrder {
 
   // Тип действия в Promind: plus, pro или tokens
   @Column({ name: 'promind_action', nullable: true })
-  promindAction?: 'plus' | 'pro' | 'tokens';
+  promindAction?: PromindAction;
 }

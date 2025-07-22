@@ -13,6 +13,7 @@ import { TokenTransaction } from 'src/user/entities/token-transaction.entity';
 import { OrderIncome } from 'src/user/entities/order-income.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 import { MainOrder } from 'src/external/entities/order.entity';
+import { PromindAction } from 'src/constants/promind-action.enum';
 
 @Injectable()
 export class TelegramService {
@@ -533,7 +534,9 @@ export class TelegramService {
         totalAmount: plan === 'PLUS' ? 2000 : 5000,
         totalPoints: 1,
         userId: mainUser.id,
-        promindAction: plan === 'PLUS' ? 'plus' : 'pro',
+        promind: true,
+        promindAction:
+          plan === 'PLUS' ? PromindAction.PLUS : PromindAction.PRO,
       });
       await this.orderRepo.save(order);
 
@@ -618,18 +621,21 @@ export class TelegramService {
         const income = await this.incomeRepo.save(this.incomeRepo.create({ mainOrderId: order.id, userId: mainUser.id }));
 
         let add = 1000;
-        if (order.promindAction === 'plus') {
+        if (order.promindAction === PromindAction.PLUS) {
           add = 1000;
           profile.tokens.plan = 'PLUS';
-        } else if (order.promindAction === 'pro') {
+        } else if (order.promindAction === PromindAction.PRO) {
           add = 3500;
           profile.tokens.plan = 'PRO';
-        } else if (order.promindAction === 'tokens') {
+        } else if (order.promindAction === PromindAction.TOKENS) {
           add = 1000;
         }
 
         const now = new Date();
-        if (order.promindAction === 'plus' || order.promindAction === 'pro') {
+        if (
+          order.promindAction === PromindAction.PLUS ||
+          order.promindAction === PromindAction.PRO
+        ) {
           const until = new Date(now);
           until.setDate(until.getDate() + 30);
           profile.tokens.dateSubscription = now;
