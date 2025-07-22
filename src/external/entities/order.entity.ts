@@ -20,4 +20,8 @@ export class MainOrder {
 
   @Column({ default: false })
   promind: boolean;
+
+  // Тип действия в Promind: plus, pro или tokens
+  @Column({ name: 'promind_action', nullable: true })
+  promindAction?: 'plus' | 'pro' | 'tokens';
 }

@@ -533,6 +533,7 @@ export class TelegramService {
         totalAmount: plan === 'PLUS' ? 2000 : 5000,
         totalPoints: 1,
         userId: mainUser.id,
+        promindAction: plan === 'PLUS' ? 'plus' : 'pro',
       });
       await this.orderRepo.save(order);
 
@@ -617,16 +618,18 @@ export class TelegramService {
         const income = await this.incomeRepo.save(this.incomeRepo.create({ mainOrderId: order.id, userId: mainUser.id }));
 
         let add = 1000;
-        if (order.totalAmount === 2000) {
+        if (order.promindAction === 'plus') {
           add = 1000;
           profile.tokens.plan = 'PLUS';
-        } else if (order.totalAmount === 5000) {
+        } else if (order.promindAction === 'pro') {
           add = 3500;
           profile.tokens.plan = 'PRO';
+        } else if (order.promindAction === 'tokens') {
+          add = 1000;
         }
 
         const now = new Date();
-        if (order.totalAmount === 2000 || order.totalAmount === 5000) {
+        if (order.promindAction === 'plus' || order.promindAction === 'pro') {
           const until = new Date(now);
           until.setDate(until.getDate() + 30);
           profile.tokens.dateSubscription = now;
