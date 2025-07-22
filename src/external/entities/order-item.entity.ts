@@ -9,6 +9,7 @@ export class MainOrderItem {
   @Column()
   orderId: number;
 
-  @Column({ nullable: true })
+  // Flag for promind action encoded in main DB
+  @Column({ name: 'promind_action', nullable: true })
   promindAction?: string;
 }
