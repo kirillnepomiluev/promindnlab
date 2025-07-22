@@ -17,4 +17,7 @@ export class MainOrder {
 
   @Column()
   userId: number;
+
+  @Column({ default: false })
+  promind: boolean;
 }

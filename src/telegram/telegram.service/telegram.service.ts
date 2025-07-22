@@ -9,6 +9,8 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserProfile } from 'src/user/entities/user-profile.entity';
 import { UserTokens } from 'src/user/entities/user-tokens.entity';
+import { TokenTransaction } from 'src/user/entities/token-transaction.entity';
+import { OrderIncome } from 'src/user/entities/order-income.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 import { MainOrder } from 'src/external/entities/order.entity';
 
@@ -34,12 +36,28 @@ export class TelegramService {
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
     private readonly tokensRepo: Repository<UserTokens>,
+    @InjectRepository(TokenTransaction)
+    private readonly txRepo: Repository<TokenTransaction>,
     @InjectRepository(MainUser, 'mainDb')
     private readonly mainUserRepo: Repository<MainUser>,
     @InjectRepository(MainOrder, 'mainDb')
     private readonly orderRepo: Repository<MainOrder>,
+    @InjectRepository(OrderIncome)
+    private readonly incomeRepo: Repository<OrderIncome>,
   ) {
     this.registerHandlers();
+  }
+
+  // Создаёт запись о движении токенов
+  private async addTransaction(profile: UserProfile, amount: number, type: 'DEBIT' | 'CREDIT', comment?: string, orderIncomeId?: number) {
+    const tx = this.txRepo.create({
+      userId: profile.id,
+      amount,
+      type,
+      comment,
+      orderIncomeId,
+    });
+    await this.txRepo.save(tx);
   }
   private async sendPhoto(ctx: Context, image: string | Buffer) {
     if (Buffer.isBuffer(image)) {
@@ -72,18 +90,20 @@ export class TelegramService {
     if (profile.tokens.tokens < cost) {
       if (!profile.tokens.plan) {
         await ctx.reply(
-          'На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом приобретите подписку по одному из планов:\nLITE 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
+          'На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
           Markup.inlineKeyboard([
-            Markup.button.url('LITE', 'https://t.me/test_NLab_bot?start=itemByID_22'),
+            Markup.button.url('PLUS', 'https://t.me/test_NLab_bot?start=itemByID_22'),
             Markup.button.url('PRO', 'https://t.me/test_NLab_bot?start=itemByID_23'),
+            Markup.button.callback('оплачено', 'payment_done'),
           ]),
         );
       } else {
-        const price = profile.tokens.plan === 'LITE' ? 400 : 200;
+        const price = profile.tokens.plan === 'PLUS' ? 400 : 200;
         await ctx.reply(
           `На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом пополните баланс:\n${price} рублей - 1000 токенов`,
           Markup.inlineKeyboard([
             Markup.button.url('пополнить', 'https://t.me/test_NLab_bot?start=itemByID_24'),
+            Markup.button.callback('оплачено', 'payment_done'),
           ]),
         );
       }
@@ -91,6 +111,7 @@ export class TelegramService {
     }
     profile.tokens.tokens -= cost;
     await this.tokensRepo.save(profile.tokens);
+    await this.addTransaction(profile, cost, 'DEBIT');
     return true;
   }
 
@@ -128,6 +149,7 @@ export class TelegramService {
       profile.userTokensId = tokens.id;
       await this.profileRepo.save(profile);
       profile.tokens = tokens;
+      await this.addTransaction(profile, tokens.tokens, 'CREDIT', 'initial balance');
     } else {
       profile.lastMessageAt = now;
       await this.profileRepo.save(profile);
@@ -142,6 +164,7 @@ export class TelegramService {
       profile.userTokensId = tokens.id;
       await this.profileRepo.save(profile);
       profile.tokens = tokens;
+      await this.addTransaction(profile, tokens.tokens, 'CREDIT', 'initial balance');
     }
 
     if (isNew && ctx) {
@@ -198,10 +221,11 @@ export class TelegramService {
         await this.tokensRepo.save(profile.tokens);
       }
       await ctx.reply(
-        'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nLITE 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
+        'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
         Markup.inlineKeyboard([
-          Markup.button.url('LITE', 'https://t.me/test_NLab_bot?start=itemByID_22'),
+          Markup.button.url('PLUS', 'https://t.me/test_NLab_bot?start=itemByID_22'),
           Markup.button.url('PRO', 'https://t.me/test_NLab_bot?start=itemByID_23'),
+          Markup.button.callback('оплачено', 'payment_done'),
         ]),
       );
       return null;
@@ -362,10 +386,11 @@ export class TelegramService {
           await this.tokensRepo.save(profile.tokens);
         }
         await ctx.reply(
-          'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nLITE 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
+          'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
           Markup.inlineKeyboard([
-            Markup.button.url('LITE', 'https://t.me/test_NLab_bot?start=itemByID_22'),
+            Markup.button.url('PLUS', 'https://t.me/test_NLab_bot?start=itemByID_22'),
             Markup.button.url('PRO', 'https://t.me/test_NLab_bot?start=itemByID_23'),
+            Markup.button.callback('оплачено', 'payment_done'),
           ]),
         );
         return;
@@ -464,10 +489,10 @@ export class TelegramService {
     });
 
     // оформление подписки
-    this.bot.action(['subscribe_LITE', 'subscribe_PRO'], async (ctx) => {
+    this.bot.action(['subscribe_PLUS', 'subscribe_PRO'], async (ctx) => {
       await ctx.answerCbQuery();
       const data = (ctx.callbackQuery as any).data as string;
-      const plan = data === 'subscribe_LITE' ? 'LITE' : 'PRO';
+      const plan = data === 'subscribe_PLUS' ? 'PLUS' : 'PRO';
 
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
 
@@ -477,20 +502,18 @@ export class TelegramService {
         return;
       }
 
-      profile.tokens.pendingPayment = plan as 'LITE' | 'PRO';
+      profile.tokens.pendingPayment = plan as 'PLUS' | 'PRO';
       await this.tokensRepo.save(profile.tokens);
 
       await ctx.editMessageText(
         `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
-        Markup.inlineKeyboard([
-          Markup.button.callback('Открыть', `open_pay_${plan}`),
-        ]),
+        Markup.inlineKeyboard([Markup.button.callback('Открыть', `open_pay_${plan}`)]),
       );
     });
 
-    this.bot.action(/^open_pay_(LITE|PRO)$/, async (ctx) => {
+    this.bot.action(/^open_pay_(PLUS|PRO)$/, async (ctx) => {
       await ctx.answerCbQuery();
-      const plan = ctx.match[1] as 'LITE' | 'PRO';
+      const plan = ctx.match[1] as 'PLUS' | 'PRO';
 
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
 
@@ -507,7 +530,7 @@ export class TelegramService {
 
       const order = this.orderRepo.create({
         status: 'Pending',
-        totalAmount: plan === 'LITE' ? 2000 : 5000,
+        totalAmount: plan === 'PLUS' ? 2000 : 5000,
         totalPoints: 1,
         userId: mainUser.id,
       });
@@ -516,10 +539,7 @@ export class TelegramService {
       const botLink = `https://t.me/test_NLab_bot?start=pay_${plan}`;
       await ctx.editMessageText(
         `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
-        Markup.inlineKeyboard([
-          Markup.button.url('Открыть', botLink),
-          Markup.button.callback('Я оплатил', `paid_${plan}`),
-        ]),
+        Markup.inlineKeyboard([Markup.button.url('Открыть', botLink), Markup.button.callback('Я оплатил', `paid_${plan}`)]),
       );
     });
 
@@ -538,7 +558,7 @@ export class TelegramService {
     });
 
     // подтверждение оплаты
-    this.bot.action(['paid_LITE', 'paid_PRO', 'paid_TOPUP'], async (ctx) => {
+    this.bot.action(['paid_PLUS', 'paid_PRO', 'paid_TOPUP'], async (ctx) => {
       await ctx.answerCbQuery();
       const data = (ctx.callbackQuery as any).data as string;
       const type = data.replace('paid_', '').toUpperCase();
@@ -548,9 +568,10 @@ export class TelegramService {
         return;
       }
       profile.tokens.pendingPayment = null;
-      if (type === 'LITE' || type === 'PRO') {
-        profile.tokens.plan = type as 'LITE' | 'PRO';
-        profile.tokens.tokens += type === 'LITE' ? 1000 : 3500;
+      if (type === 'PLUS' || type === 'PRO') {
+        profile.tokens.plan = type as 'PLUS' | 'PRO';
+        const add = type === 'PLUS' ? 1000 : 3500;
+        profile.tokens.tokens += add;
         const now = new Date();
         const until = new Date(now);
         until.setDate(until.getDate() + 30);
@@ -560,11 +581,81 @@ export class TelegramService {
         profile.subscriptionUntil = until;
         await this.tokensRepo.save(profile.tokens);
         await this.profileRepo.save(profile);
+        await this.addTransaction(profile, add, 'CREDIT', `subscription ${type}`);
         await ctx.editMessageText(`Поздравляем с подпиской ${type}!`);
       } else {
-        profile.tokens.tokens += 1000;
+        const add = 1000;
+        profile.tokens.tokens += add;
         await this.tokensRepo.save(profile.tokens);
+        await this.addTransaction(profile, add, 'CREDIT', 'balance topup');
         await ctx.editMessageText('На ваш счёт зачислено 1000 бонусов');
+      }
+    });
+
+    // проверка оплаченных заказов в основной БД
+    this.bot.action('payment_done', async (ctx) => {
+      await ctx.answerCbQuery();
+      const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+      const mainUser = await this.mainUserRepo.findOne({
+        where: { telegramId: Number(profile.telegramId) },
+      });
+      if (!mainUser) {
+        await ctx.reply('вы не авторизованы, получите приглашение у спонсора');
+        return;
+      }
+
+      const orders = await this.orderRepo.find({
+        where: { userId: mainUser.id, promind: true },
+      });
+      let processed = 0;
+      for (const order of orders) {
+        const exists = await this.incomeRepo.findOne({
+          where: { mainOrderId: order.id },
+        });
+        if (exists) continue;
+
+        const income = await this.incomeRepo.save(this.incomeRepo.create({ mainOrderId: order.id, userId: mainUser.id }));
+
+        let add = 1000;
+        if (order.totalAmount === 2000) {
+          add = 1000;
+          profile.tokens.plan = 'PLUS';
+        } else if (order.totalAmount === 5000) {
+          add = 3500;
+          profile.tokens.plan = 'PRO';
+        }
+
+        const now = new Date();
+        if (order.totalAmount === 2000 || order.totalAmount === 5000) {
+          const until = new Date(now);
+          until.setDate(until.getDate() + 30);
+          profile.tokens.dateSubscription = now;
+          profile.tokens.subscriptionUntil = until;
+          profile.dateSubscription = now;
+          profile.subscriptionUntil = until;
+        }
+
+        profile.tokens.tokens += add;
+        await this.tokensRepo.save(profile.tokens);
+        await this.profileRepo.save(profile);
+
+        await this.txRepo.save(
+          this.txRepo.create({
+            userId: profile.id,
+            amount: add,
+            type: 'CREDIT',
+            comment: `order ${order.id}`,
+            orderIncomeId: income.id,
+          }),
+        );
+
+        processed++;
+      }
+
+      if (processed > 0) {
+        await ctx.reply(`Обработано заказов: ${processed}`);
+      } else {
+        await ctx.reply('Новых оплаченных заказов не найдено');
       }
     });
 
