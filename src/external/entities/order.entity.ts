@@ -20,4 +20,5 @@ export class MainOrder {
 
   @Column({ default: false })
   promind: boolean;
+
 }
