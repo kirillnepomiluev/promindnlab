@@ -110,6 +110,11 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
    nvm use --lts
    ```
 3. Склонируйте репозиторий и перейдите в каталог проекта. Скопируйте файл `example.env` в `.env` и заполните значения переменных.
+promindnlab
+git clone git@github.com:kirillnepomiluev/promindnlab.git promindnlab
+nano .env
+Сохранить: Ctrl + O, Enter
+Выйти: Ctrl + X
 4. Установите зависимости и запустите контейнер с PostgreSQL (при необходимости):
    ```bash
    npm install
@@ -124,3 +129,4 @@ Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
    ```bash
    npm run start:prod
    ```
+pm2 start npm --name "promind" -- run start:prod
