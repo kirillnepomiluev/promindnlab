@@ -3,17 +3,17 @@ import { InjectBot } from 'nestjs-telegraf';
 import { Telegraf, Context, Markup } from 'telegraf';
 import * as QRCode from 'qrcode';
 import * as path from 'path';
-import { OpenAiService } from 'src/openai/openai.service/openai.service';
-import { VoiceService } from 'src/voice/voice.service/voice.service';
+import { OpenAiService } from '../../openai/openai.service/openai.service';
+import { VoiceService } from '../../voice/voice.service/voice.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { UserProfile } from 'src/user/entities/user-profile.entity';
-import { UserTokens } from 'src/user/entities/user-tokens.entity';
-import { TokenTransaction } from 'src/user/entities/token-transaction.entity';
-import { OrderIncome } from 'src/user/entities/order-income.entity';
-import { MainUser } from 'src/external/entities/main-user.entity';
-import { MainOrder } from 'src/external/entities/order.entity';
-import { MainOrderItem } from 'src/external/entities/order-item.entity';
+import { UserProfile } from '../../user/entities/user-profile.entity';
+import { UserTokens } from '../../user/entities/user-tokens.entity';
+import { TokenTransaction } from '../../user/entities/token-transaction.entity';
+import { OrderIncome } from '../../user/entities/order-income.entity';
+import { MainUser } from '../../external/entities/main-user.entity';
+import { MainOrder } from '../../external/entities/order.entity';
+import { MainOrderItem } from '../../external/entities/order-item.entity';
 
 @Injectable()
 export class TelegramService {
