@@ -7,7 +7,7 @@ export class MainUser {
   id: number;
 
   @Column({ type: 'bigint' })
-  telegramId: number;
+  telegramId: string;
 
   @Column({ nullable: true })
   firstName: string;
@@ -20,9 +20,9 @@ export class MainUser {
 
   // ID пригласившего пользователя из таблицы users
   @Column({ type: 'bigint', nullable: true })
-  whoInvitedId: number;
+  whoInvitedId: string;
 
   // Telegram ID пользователя, пригласившего этого юзера
   @Column({ type: 'bigint', nullable: true })
-  telegramIdOfReferall: number;
+  telegramIdOfReferall: string;
 }
