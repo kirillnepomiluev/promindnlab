@@ -13,6 +13,7 @@ import { TokenTransaction } from 'src/user/entities/token-transaction.entity';
 import { OrderIncome } from 'src/user/entities/order-income.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 import { MainOrder } from 'src/external/entities/order.entity';
+import { MainOrderItem } from 'src/external/entities/order-item.entity';
 
 @Injectable()
 export class TelegramService {
@@ -42,6 +43,8 @@ export class TelegramService {
     private readonly mainUserRepo: Repository<MainUser>,
     @InjectRepository(MainOrder, 'mainDb')
     private readonly orderRepo: Repository<MainOrder>,
+    @InjectRepository(MainOrderItem, 'mainDb')
+    private readonly orderItemRepo: Repository<MainOrderItem>,
     @InjectRepository(OrderIncome)
     private readonly incomeRepo: Repository<OrderIncome>,
   ) {
@@ -614,19 +617,33 @@ export class TelegramService {
         });
         if (exists) continue;
 
-        const income = await this.incomeRepo.save(this.incomeRepo.create({ mainOrderId: order.id, userId: mainUser.id }));
+        const items = await this.orderItemRepo.find({ where: { orderId: order.id } });
+        if (items.length === 0) continue;
 
-        let add = 1000;
-        if (order.totalAmount === 2000) {
-          add = 1000;
-          profile.tokens.plan = 'PLUS';
-        } else if (order.totalAmount === 5000) {
-          add = 3500;
-          profile.tokens.plan = 'PRO';
+        const income = await this.incomeRepo.save(
+          this.incomeRepo.create({ mainOrderId: order.id, userId: mainUser.id }),
+        );
+
+        let add = 0;
+        let isSubscription = false;
+        for (const item of items) {
+          if (item.promindAction === 'plus') {
+            add += 1000;
+            profile.tokens.plan = 'PLUS';
+            isSubscription = true;
+          } else if (item.promindAction === 'pro') {
+            add += 3500;
+            profile.tokens.plan = 'PRO';
+            isSubscription = true;
+          } else if (item.promindAction === 'tokens') {
+            add += 1000;
+          }
         }
 
+        if (add === 0) continue;
+
         const now = new Date();
-        if (order.totalAmount === 2000 || order.totalAmount === 5000) {
+        if (isSubscription) {
           const until = new Date(now);
           until.setDate(until.getDate() + 30);
           profile.tokens.dateSubscription = now;
