@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { TextContentBlock } from 'openai/resources/beta/threads/messages';
+import { SessionService } from '../../session/session.service';
 
 @Injectable()
 export class OpenAiService {
@@ -9,7 +10,10 @@ export class OpenAiService {
   private readonly logger = new Logger(OpenAiService.name);
   private threadMap: Map<number, string> = new Map();
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly sessionService: SessionService,
+  ) {
     const rawKey = this.configService.get<string>('OPENAI_API_KEY_PRO');
     if (!rawKey) {
       throw new Error('Не задана переменная окружения OPENAI_API_KEY_PRO');
@@ -49,7 +53,10 @@ export class OpenAiService {
   }
 
   async chat(content: string, userId: number) {
-    let threadId = this.threadMap.get(userId);
+    let threadId = await this.sessionService.getSessionId(userId);
+    if (threadId) {
+      this.threadMap.set(userId, threadId);
+    }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
     try {
@@ -59,6 +66,7 @@ export class OpenAiService {
 
         threadId = thread.id;
         this.threadMap.set(userId, threadId);
+        await this.sessionService.setSessionId(userId, threadId);
       } else {
         // Если тред уже есть, просто получаем его ID
         thread = { id: threadId };

@@ -34,11 +34,11 @@
     "node-fetch": "^2.7.0",
     "openai": "^4.96.2",
     "pg": "^8.15.6",
+    "qrcode": "^1.5.3",
     "reflect-metadata": "^0.2.0",
     "rxjs": "^7.8.1",
     "telegraf": "^4.16.3",
-    "typeorm": "^0.3.22",
-    "qrcode": "^1.5.3"
+    "typeorm": "^0.3.22"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",
