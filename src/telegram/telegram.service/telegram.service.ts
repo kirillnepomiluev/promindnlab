@@ -617,7 +617,10 @@ export class TelegramService {
         });
         if (exists) continue;
 
-        const items = await this.orderItemRepo.find({ where: { orderId: order.id } });
+        const items = await this.orderItemRepo.find({
+          where: { orderId: order.id },
+          relations: ['item'],
+        });
         if (items.length === 0) continue;
 
         const income = await this.incomeRepo.save(
@@ -626,16 +629,17 @@ export class TelegramService {
 
         let add = 0;
         let isSubscription = false;
-        for (const item of items) {
-          if (item.promindAction === 'plus') {
+        for (const orderItem of items) {
+          const action = (orderItem.item?.promindAction || '').toLowerCase();
+          if (action === 'plus') {
             add += 1000;
             profile.tokens.plan = 'PLUS';
             isSubscription = true;
-          } else if (item.promindAction === 'pro') {
+          } else if (action === 'pro') {
             add += 3500;
             profile.tokens.plan = 'PRO';
             isSubscription = true;
-          } else if (item.promindAction === 'tokens') {
+          } else if (action === 'tokens') {
             add += 1000;
           }
         }

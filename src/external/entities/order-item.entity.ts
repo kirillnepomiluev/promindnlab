@@ -1,6 +1,6 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Column, Entity, PrimaryGeneratedColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Item } from './item.entity';
 
-// Item of an order from main project
 @Entity({ name: 'order_items' })
 export class MainOrderItem {
   @PrimaryGeneratedColumn()
@@ -9,6 +9,10 @@ export class MainOrderItem {
   @Column()
   orderId: number;
 
-  @Column({ nullable: true })
-  promindAction: string;
+  @Column()
+  itemId: number;
+
+  @ManyToOne(() => Item)
+  @JoinColumn({ name: 'itemId' })
+  item: Item;
 }
