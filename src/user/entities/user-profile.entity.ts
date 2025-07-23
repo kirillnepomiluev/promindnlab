@@ -41,6 +41,9 @@ export class UserProfile {
   @Column({ nullable: true })
   userTokensId: number;
 
+  @Column({ nullable: true })
+  sessionId?: string;
+
   // Дата начала оплаченного тарифа
   @Column({ type: 'timestamptz', nullable: true })
   dateSubscription?: Date;
