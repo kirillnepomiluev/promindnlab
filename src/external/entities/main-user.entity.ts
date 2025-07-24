@@ -7,7 +7,7 @@ export class MainUser {
   id: number;
 
   @Column({ type: 'bigint' })
-  telegramId: string;
+  telegramId: number;
 
   @Column({ nullable: true })
   firstName: string;

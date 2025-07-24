@@ -68,7 +68,7 @@ export class TelegramService {
   private findMainUser(id: number): Promise<MainUser | null> {
     const MAX_INT32 = 2_147_483_647;
     if (id > MAX_INT32) return Promise.resolve(null);
-    return this.mainUserRepo.findOne({ where: { telegramId: String(id) } });
+    return this.mainUserRepo.findOne({ where: { telegramId: id } });
   }
 
   // Создаёт запись о движении токенов
