@@ -18,7 +18,9 @@ export class SessionService {
       return cached;
     }
 
-    const profile = await this.profileRepo.findOne({ where: { id: userId } });
+    const profile = await this.profileRepo.findOne({
+      where: { telegramId: String(userId) },
+    });
     if (profile?.sessionId) {
       this.cache.set(userId, profile.sessionId);
       return profile.sessionId;
@@ -29,11 +31,11 @@ export class SessionService {
 
   async clearSession(userId: number): Promise<void> {
     this.cache.delete(userId);
-    await this.profileRepo.update({ id: userId }, { sessionId: null });
+    await this.profileRepo.update({ telegramId: String(userId) }, { sessionId: null });
   }
 
   async setSessionId(userId: number, sessionId: string): Promise<void> {
     this.cache.set(userId, sessionId);
-    await this.profileRepo.update({ id: userId }, { sessionId });
+    await this.profileRepo.update({ telegramId: String(userId) }, { sessionId });
   }
 }
