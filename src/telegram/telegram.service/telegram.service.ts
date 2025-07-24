@@ -32,7 +32,7 @@ export class TelegramService {
   constructor(
     @InjectBot() private readonly bot: Telegraf<Context>,
     private readonly openai: OpenAiService,
-    private readonly voice: VoiceService,
+  private readonly voice: VoiceService,
     @InjectRepository(UserProfile)
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
@@ -46,9 +46,17 @@ export class TelegramService {
     @InjectRepository(MainOrderItem, 'mainDb')
     private readonly orderItemRepo: Repository<MainOrderItem>,
     @InjectRepository(OrderIncome)
-    private readonly incomeRepo: Repository<OrderIncome>,
+  private readonly incomeRepo: Repository<OrderIncome>,
   ) {
     this.registerHandlers();
+  }
+
+  // main database uses 32-bit integers for telegramId,
+  // so skip lookup when id is out of range
+  private findMainUser(id: number): Promise<MainUser | null> {
+    const MAX_INT32 = 2_147_483_647;
+    if (id > MAX_INT32) return Promise.resolve(null);
+    return this.mainUserRepo.findOne({ where: { telegramId: String(id) } });
   }
 
   // Создаёт запись о движении токенов
@@ -134,7 +142,7 @@ export class TelegramService {
     const now = new Date();
     let isNew = false;
     if (!profile) {
-      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: from.id } });
+      const mainUser = await this.findMainUser(from.id);
       profile = this.profileRepo.create({
         telegramId: String(from.id),
         firstName: mainUser?.firstName ?? from.first_name,
@@ -191,7 +199,7 @@ export class TelegramService {
 
     if (!profile) {
       // если его нет, ищем в основной базе
-      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: from.id } });
+      const mainUser = await this.findMainUser(from.id);
       if (!mainUser) {
         const inviterId = this.pendingInvites.get(from.id);
         if (!inviterId) {
@@ -199,7 +207,7 @@ export class TelegramService {
           return null;
         }
 
-        const inviter = await this.mainUserRepo.findOne({ where: { telegramId: Number(inviterId) } });
+        const inviter = await this.findMainUser(Number(inviterId));
         if (!inviter) {
           await ctx.reply('Пригласитель не найден.');
           this.pendingInvites.delete(from.id);
@@ -398,7 +406,7 @@ export class TelegramService {
         );
         return;
       }
-      const main = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      const main = await this.findMainUser(Number(profile.telegramId));
 
       const userParts = [] as string[];
       if (main?.firstName || profile.firstName) userParts.push(main?.firstName ?? profile.firstName);
@@ -408,7 +416,7 @@ export class TelegramService {
 
       let sponsorInfo = 'не указан';
       if (main?.telegramIdOfReferall) {
-        const sponsor = await this.mainUserRepo.findOne({ where: { telegramId: Number(main.telegramIdOfReferall) } });
+        const sponsor = await this.findMainUser(Number(main.telegramIdOfReferall));
         if (sponsor) {
           const sponsorParts = [] as string[];
           if (sponsor.firstName) sponsorParts.push(sponsor.firstName);
@@ -460,7 +468,7 @@ export class TelegramService {
       }
 
       this.pendingInvites.set(ctx.from.id, payload);
-      const inviter = await this.mainUserRepo.findOne({ where: { telegramId: Number(payload) } });
+      const inviter = await this.findMainUser(Number(payload));
       if (!inviter) {
         await ctx.reply('Пригласитель не найден.');
         return;
@@ -499,7 +507,7 @@ export class TelegramService {
 
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
 
-      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      const mainUser = await this.findMainUser(Number(profile.telegramId));
       if (!mainUser) {
         await ctx.reply('вы не авторизованы, получите приглашение у своего спонсора');
         return;
@@ -520,7 +528,7 @@ export class TelegramService {
 
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
 
-      const mainUser = await this.mainUserRepo.findOne({ where: { telegramId: Number(profile.telegramId) } });
+      const mainUser = await this.findMainUser(Number(profile.telegramId));
       if (!mainUser) {
         await ctx.reply('вы не авторизованы, получите приглашение у своего спонсора');
         return;
@@ -599,9 +607,7 @@ export class TelegramService {
     this.bot.action('payment_done', async (ctx) => {
       await ctx.answerCbQuery();
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      const mainUser = await this.mainUserRepo.findOne({
-        where: { telegramId: Number(profile.telegramId) },
-      });
+      const mainUser = await this.findMainUser(Number(profile.telegramId));
       if (!mainUser) {
         await ctx.reply('вы не авторизованы, получите приглашение у спонсора');
         return;
