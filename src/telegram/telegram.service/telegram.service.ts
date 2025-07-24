@@ -63,11 +63,11 @@ export class TelegramService {
     this.registerHandlers();
   }
 
-  // main database uses 32-bit integers for telegramId,
-  // so skip lookup when id is out of range
+  // Поиск пользователя в основной базе.
+  // Ранее здесь была проверка на диапазон 32-bit, но теперь
+  // основной бот хранит идентификаторы как bigint,
+  // поэтому выполняем поиск без дополнительных ограничений.
   private findMainUser(id: number): Promise<MainUser | null> {
-    const MAX_INT32 = 2_147_483_647;
-    if (id > MAX_INT32) return Promise.resolve(null);
     return this.mainUserRepo.findOne({ where: { telegramId: id } });
   }
 
