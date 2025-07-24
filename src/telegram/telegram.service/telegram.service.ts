@@ -59,7 +59,7 @@ export class TelegramService {
   ) {
     // ссылка на основной бот из переменной окружения
     this.mainBotUrl = this.cfg.get<string>('MAIN_BOT_LINK') ??
-      'https://t.me/personal_assistent_NeuroLab_bot';
+      'https://t.me/test_NLab_bot';
     this.registerHandlers();
   }
 
