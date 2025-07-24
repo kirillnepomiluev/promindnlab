@@ -14,6 +14,7 @@ import { OrderIncome } from 'src/user/entities/order-income.entity';
 import { MainUser } from 'src/external/entities/main-user.entity';
 import { MainOrder } from 'src/external/entities/order.entity';
 import { MainOrderItem } from 'src/external/entities/order-item.entity';
+import { ConfigService } from '@nestjs/config';
 
 @Injectable()
 export class TelegramService {
@@ -28,11 +29,19 @@ export class TelegramService {
   // временное хранилище для незарегистрированных пользователей,
   // которые перешли по пригласительной ссылке
   private pendingInvites = new Map<number, string>();
+  // ссылка на основной бот компании, где проходит первоначальная регистрация
+  private readonly mainBotUrl: string;
+
+  // формирует ссылку на основной бот, добавляя id пригласителя при необходимости
+  private getMainBotLink(inviterId?: string): string {
+    return inviterId ? `${this.mainBotUrl}?start=${inviterId}` : this.mainBotUrl;
+  }
 
   constructor(
     @InjectBot() private readonly bot: Telegraf<Context>,
     private readonly openai: OpenAiService,
-  private readonly voice: VoiceService,
+    private readonly voice: VoiceService,
+    private readonly cfg: ConfigService,
     @InjectRepository(UserProfile)
     private readonly profileRepo: Repository<UserProfile>,
     @InjectRepository(UserTokens)
@@ -46,8 +55,11 @@ export class TelegramService {
     @InjectRepository(MainOrderItem, 'mainDb')
     private readonly orderItemRepo: Repository<MainOrderItem>,
     @InjectRepository(OrderIncome)
-  private readonly incomeRepo: Repository<OrderIncome>,
+    private readonly incomeRepo: Repository<OrderIncome>,
   ) {
+    // ссылка на основной бот из переменной окружения
+    this.mainBotUrl = this.cfg.get<string>('MAIN_BOT_LINK') ??
+      'https://t.me/personal_assistent_NeuroLab_bot';
     this.registerHandlers();
   }
 
@@ -202,26 +214,18 @@ export class TelegramService {
       const mainUser = await this.findMainUser(from.id);
       if (!mainUser) {
         const inviterId = this.pendingInvites.get(from.id);
-        if (!inviterId) {
-          await ctx.reply('Пожалуйста, перейдите по пригласительной ссылке.');
-          return null;
-        }
-
-        const inviter = await this.findMainUser(Number(inviterId));
-        if (!inviter) {
-          await ctx.reply('Пригласитель не найден.');
-          this.pendingInvites.delete(from.id);
-          return null;
-        }
-
+        const link = this.getMainBotLink(inviterId);
         await ctx.reply(
-          `Вас пригласил пользователь - ${this.getFullName(inviter)}. Вы подтверждаете?`,
-          Markup.inlineKeyboard([Markup.button.callback('Подтвердить', `confirm:${inviterId}`)]),
+          `Сначала зарегистрируйтесь в основном боте компании по ссылке: ${link}`,
         );
         return null;
       }
 
-      profile = await this.findOrCreateProfile(from, mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined, ctx);
+      profile = await this.findOrCreateProfile(
+        from,
+        mainUser.whoInvitedId ? String(mainUser.whoInvitedId) : undefined,
+        ctx,
+      );
     } else {
       profile = await this.findOrCreateProfile(from, undefined, ctx);
     }
@@ -483,6 +487,15 @@ export class TelegramService {
     // подтверждение приглашения и создание профиля
     this.bot.action(/^confirm:(.+)/, async (ctx) => {
       const inviterId = ctx.match[1];
+      const mainUser = await this.findMainUser(ctx.from.id);
+      if (!mainUser) {
+        const link = this.getMainBotLink(inviterId);
+        await ctx.editMessageText(
+          `Сначала зарегистрируйтесь в основном боте компании по ссылке: ${link}`,
+        );
+        return;
+      }
+
       await this.findOrCreateProfile(ctx.from, inviterId, ctx);
       this.pendingInvites.delete(ctx.from.id);
       await ctx.editMessageText('Регистрация завершена');
@@ -492,7 +505,7 @@ export class TelegramService {
       await ctx.answerCbQuery();
 
       const profile = await this.findOrCreateProfile(ctx.from, undefined, ctx);
-      const inviteLink = `https://t.me/personal_assistent_NeuroLab_bot?start=${profile.telegramId}`;
+      const inviteLink = `${this.mainBotUrl}?start=${profile.telegramId}`;
 
       const qr = await QRCode.toBuffer(inviteLink);
       // Отправляем QR-код и текст с ссылкой одним сообщением
