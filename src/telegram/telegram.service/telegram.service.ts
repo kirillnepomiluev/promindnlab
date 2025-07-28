@@ -115,8 +115,8 @@ export class TelegramService {
         await ctx.reply(
           'На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
           Markup.inlineKeyboard([
-            Markup.button.url('PLUS', 'https://t.me/test_NLab_bot?start=itemByID_22'),
-            Markup.button.url('PRO', 'https://t.me/test_NLab_bot?start=itemByID_23'),
+            Markup.button.url('PLUS', `${this.mainBotUrl}?start=itemByID_22`),
+            Markup.button.url('PRO', `${this.mainBotUrl}?start=itemByID_23`),
             Markup.button.callback('оплачено', 'payment_done'),
           ]),
         );
@@ -125,7 +125,7 @@ export class TelegramService {
         await ctx.reply(
           `На Вашем балансе недостаточно токенов для генерации.\nДля продолжения работы с ботом пополните баланс:\n${price} рублей - 1000 токенов`,
           Markup.inlineKeyboard([
-            Markup.button.url('пополнить', 'https://t.me/test_NLab_bot?start=itemByID_24'),
+            Markup.button.url('пополнить', `${this.mainBotUrl}?start=itemByID_24`),
             Markup.button.callback('оплачено', 'payment_done'),
           ]),
         );
@@ -238,8 +238,8 @@ export class TelegramService {
       await ctx.reply(
         'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
         Markup.inlineKeyboard([
-          Markup.button.url('PLUS', 'https://t.me/test_NLab_bot?start=itemByID_22'),
-          Markup.button.url('PRO', 'https://t.me/test_NLab_bot?start=itemByID_23'),
+          Markup.button.url('PLUS', `${this.mainBotUrl}?start=itemByID_22`),
+          Markup.button.url('PRO', `${this.mainBotUrl}?start=itemByID_23`),
           Markup.button.callback('оплачено', 'payment_done'),
         ]),
       );
@@ -403,8 +403,8 @@ export class TelegramService {
         await ctx.reply(
           'Срок действия подписки истёк. Для продолжения работы с ботом приобретите подписку по одному из планов:\nPLUS 2000 рублей - 1000 токенов,\nPRO 5000 рублей - 3500 токенов',
           Markup.inlineKeyboard([
-            Markup.button.url('PLUS', 'https://t.me/test_NLab_bot?start=itemByID_22'),
-            Markup.button.url('PRO', 'https://t.me/test_NLab_bot?start=itemByID_23'),
+            Markup.button.url('PLUS', `${this.mainBotUrl}?start=itemByID_22`),
+            Markup.button.url('PRO', `${this.mainBotUrl}?start=itemByID_23`),
             Markup.button.callback('оплачено', 'payment_done'),
           ]),
         );
