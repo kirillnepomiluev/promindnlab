@@ -530,7 +530,7 @@ export class TelegramService {
       await this.tokensRepo.save(profile.tokens);
 
       await ctx.editMessageText(
-        `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
+        `Перейдите в Основной бот компании Нейролаб для оплаты подписки ${plan}`,
         Markup.inlineKeyboard([Markup.button.callback('Открыть', `open_pay_${plan}`)]),
       );
     });
@@ -560,9 +560,9 @@ export class TelegramService {
       });
       await this.orderRepo.save(order);
 
-      const botLink = `https://t.me/test_NLab_bot?start=pay_${plan}`;
+      const botLink = `${this.mainBotUrl}?start=pay_${plan}`;
       await ctx.editMessageText(
-        `Перейдите в @test_NLab_bot для оплаты подписки ${plan}`,
+        `Перейдите в Основной бот НейроЛаб для оплаты подписки ${plan}`,
         Markup.inlineKeyboard([Markup.button.url('Открыть', botLink), Markup.button.callback('Я оплатил', `paid_${plan}`)]),
       );
     });
