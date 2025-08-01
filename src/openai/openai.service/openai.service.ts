@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { TextContentBlock } from 'openai/resources/beta/threads/messages';
+import { toFile } from 'openai/uploads';
 import { SessionService } from '../../session/session.service';
 
 @Injectable()
@@ -153,6 +154,110 @@ export class OpenAiService {
     } catch (err: any) {
       this.logger.error('Ошибка при генерации изображения', err);
       return null;
+    }
+  }
+
+  /**
+   * Генерирует изображение на основе присланной пользователем картинки
+   * с помощью endpoint'a createVariation
+   */
+  async generateImageFromPhoto(image: Buffer): Promise<string | Buffer | null> {
+    try {
+      const file = await toFile(image, 'image.png');
+      const { data } = await this.openAi.images.createVariation({
+        image: file,
+        model: 'dall-e-2',
+        n: 1,
+        size: '1024x1024',
+        response_format: 'b64_json',
+      });
+      if (!data || data.length === 0) {
+        this.logger.error('Image.createVariation вернул пустой data', data);
+        return null;
+      }
+      const img = data[0];
+      if ('b64_json' in img && img.b64_json) {
+        return Buffer.from(img.b64_json, 'base64');
+      }
+      if ('url' in img && img.url) {
+        return img.url;
+      }
+      this.logger.error('Image data не содержит ни b64_json, ни url', img);
+      return null;
+    } catch (err: any) {
+      this.logger.error('Ошибка при вариации изображения', err);
+      return null;
+    }
+  }
+
+  /**
+   * Отправляет в ассистента сообщение вместе с картинкой
+   */
+  async chatWithImage(
+    content: string,
+    userId: number,
+    image: Buffer,
+  ): Promise<string> {
+    let threadId = await this.sessionService.getSessionId(userId);
+    if (threadId) {
+      this.threadMap.set(userId, threadId);
+    }
+    let thread: { id: string };
+    const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
+    try {
+      if (!threadId) {
+        thread = await this.openAi.beta.threads.create();
+        threadId = thread.id;
+        this.threadMap.set(userId, threadId);
+        await this.sessionService.setSessionId(userId, threadId);
+      } else {
+        thread = { id: threadId };
+      }
+
+      const runs = await this.openAi.beta.threads.runs.list(threadId);
+      const activeRun = runs.data.find(
+        (run) => run.status === 'in_progress' || run.status === 'queued',
+      );
+
+      if (activeRun) {
+        await this.waitForRunCompletion(threadId, activeRun.id);
+      }
+
+      // загружаем файл для ассистента
+      const fileObj = await toFile(image, 'image.png');
+      const file = await this.openAi.files.create({
+        file: fileObj,
+        purpose: 'assistants',
+      });
+
+      await this.openAi.beta.threads.messages.create(thread.id, {
+        role: 'user',
+        content: [
+          { type: 'text', text: content },
+          { type: 'image_file', image_file: { file_id: file.id } },
+        ],
+      });
+
+      const response = await this.openAi.beta.threads.runs.createAndPoll(
+        thread.id,
+        {
+          assistant_id: assistantId,
+        },
+      );
+      if (response.status === 'completed') {
+        const messages = await this.openAi.beta.threads.messages.list(
+          response.thread_id,
+        );
+        const assistantMessage = messages.data[0];
+        if (assistantMessage.content[0].type == 'text') {
+          const answer: TextContentBlock = assistantMessage.content[0];
+          return answer.text.value;
+        }
+      }
+      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+    } catch (error) {
+      this.logger.error('Ошибка при отправке сообщения с картинкой', error);
+      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
     }
   }
 }

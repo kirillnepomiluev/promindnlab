@@ -3,6 +3,7 @@ import { InjectBot } from 'nestjs-telegraf';
 import { Telegraf, Context, Markup } from 'telegraf';
 import * as QRCode from 'qrcode';
 import * as path from 'path';
+import fetch from 'node-fetch';
 import { OpenAiService } from 'src/openai/openai.service/openai.service';
 import { VoiceService } from 'src/voice/voice.service/voice.service';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -358,6 +359,43 @@ export class TelegramService {
       } catch (err) {
         this.logger.error('Ошибка обработки голосового сообщения', err);
         await ctx.reply('Произошла ошибка при обработке вашего голосового сообщения');
+      }
+    });
+
+    // обработка изображений, отправленных пользователем
+    this.bot.on('photo', async (ctx) => {
+      try {
+        const caption = ctx.message.caption?.trim() ?? '';
+        const user = await this.ensureUser(ctx);
+        if (!user) return;
+
+        const photos = ctx.message.photo;
+        const best = photos[photos.length - 1];
+        const link = await ctx.telegram.getFileLink(best.file_id);
+        const res = await fetch(link.href);
+        if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        if (caption.startsWith('/image')) {
+          if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
+          const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
+          const image = await this.openai.generateImageFromPhoto(buffer);
+          await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
+          if (image) {
+            await this.sendPhoto(ctx, image);
+          } else {
+            await ctx.reply('Не удалось сгенерировать изображение');
+          }
+        } else {
+          if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
+          const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
+          const answer = await this.openai.chatWithImage(caption, ctx.message.from.id, buffer);
+          await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
+          await ctx.reply(answer);
+        }
+      } catch (err) {
+        this.logger.error('Ошибка обработки фото', err);
+        await ctx.reply('Произошла ошибка при обработке изображения');
       }
     });
 
