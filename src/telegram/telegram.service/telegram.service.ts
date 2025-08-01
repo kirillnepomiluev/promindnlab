@@ -379,7 +379,8 @@ export class TelegramService {
         if (caption.startsWith('/image')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
-          const image = await this.openai.generateImageFromPhoto(buffer);
+          const prompt = caption.replace('/image', '').trim();
+          const image = await this.openai.generateImageFromPhoto(buffer, prompt);
           await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);

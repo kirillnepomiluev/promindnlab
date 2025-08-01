@@ -205,19 +205,26 @@ export class OpenAiService {
    * Генерирует изображение на основе присланной пользователем картинки
    * с помощью endpoint'a createVariation
    */
-  async generateImageFromPhoto(image: Buffer): Promise<string | Buffer | null> {
+  async generateImageFromPhoto(
+    image: Buffer,
+    prompt: string,
+  ): Promise<string | Buffer | null> {
     try {
+      // изображение конвертируется в PNG и уменьшатся до < 4 МБ
       const prepared = await this.prepareImage(image);
       const file = await toFile(prepared, 'image.png');
-      const { data } = await this.openAi.images.createVariation({
+      // Используем ту же модель, что и при обычной генерации,
+      // передавая текст пользователя в качестве промта
+      const { data } = await this.openAi.images.edit({
         image: file,
-        model: 'dall-e-2',
+        prompt,
+        model: 'gpt-image-1',
+        quality: 'low',
         n: 1,
         size: '1024x1024',
-        response_format: 'b64_json',
       });
       if (!data || data.length === 0) {
-        this.logger.error('Image.createVariation вернул пустой data', data);
+        this.logger.error('Image.edit вернул пустой data', data);
         return null;
       }
       const img = data[0];
@@ -230,7 +237,7 @@ export class OpenAiService {
       this.logger.error('Image data не содержит ни b64_json, ни url', img);
       return null;
     } catch (err: any) {
-      this.logger.error('Ошибка при вариации изображения', err);
+      this.logger.error('Ошибка при редактировании изображения', err);
       return null;
     }
   }
