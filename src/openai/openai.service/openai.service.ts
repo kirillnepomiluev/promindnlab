@@ -212,7 +212,7 @@ export class OpenAiService {
     try {
       // изображение конвертируется в PNG и уменьшатся до < 4 МБ
       const prepared = await this.prepareImage(image);
-      const file = await toFile(prepared, 'image.png');
+      const file = await toFile(prepared, 'image.png', { type: 'image/png' });
       // Используем ту же модель, что и при обычной генерации,
       // передавая текст пользователя в качестве промта
       const { data } = await this.openAi.images.edit({
@@ -277,7 +277,7 @@ export class OpenAiService {
 
       // загружаем файл для ассистента
       const prepared = await this.prepareImage(image);
-      const fileObj = await toFile(prepared, 'image.png');
+      const fileObj = await toFile(prepared, 'image.png', { type: 'image/png' });
       const file = await this.openAi.files.create({
         file: fileObj,
         purpose: 'assistants',
