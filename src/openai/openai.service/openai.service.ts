@@ -3,6 +3,15 @@ import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { TextContentBlock } from 'openai/resources/beta/threads/messages';
 import { toFile } from 'openai/uploads';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import * as crypto from 'crypto';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpeg = require('fluent-ffmpeg');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpegPath = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegPath);
 import { SessionService } from '../../session/session.service';
 
 @Injectable()
@@ -10,6 +19,41 @@ export class OpenAiService {
   private readonly openAi: OpenAI;
   private readonly logger = new Logger(OpenAiService.name);
   private threadMap: Map<number, string> = new Map();
+
+  /**
+   * Подготавливает изображение для отправки в OpenAI: конвертирует в PNG,
+   * уменьшает размеры до требуемых и гарантирует объём < 4 MB.
+   */
+  private async prepareImage(image: Buffer): Promise<Buffer> {
+    const tmpDir = os.tmpdir();
+    const inputPath = path.join(tmpDir, `${crypto.randomUUID()}.src`);
+    const outPath = path.join(tmpDir, `${crypto.randomUUID()}.png`);
+    await fs.writeFile(inputPath, image);
+
+    let size = 1024;
+    let result: Buffer = image;
+    while (size >= 256) {
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-vf',
+            `scale=${size}:${size}`,
+            '-compression_level',
+            '9',
+          ])
+          .output(outPath)
+          .on('end', () => resolve())
+          .on('error', (err: Error) => reject(err))
+          .run();
+      });
+      result = await fs.readFile(outPath);
+      if (result.length <= 4 * 1024 * 1024) break;
+      size = Math.floor(size / 2);
+    }
+
+    await Promise.allSettled([fs.unlink(inputPath), fs.unlink(outPath)]);
+    return result;
+  }
 
   constructor(
     private readonly configService: ConfigService,
@@ -161,18 +205,26 @@ export class OpenAiService {
    * Генерирует изображение на основе присланной пользователем картинки
    * с помощью endpoint'a createVariation
    */
-  async generateImageFromPhoto(image: Buffer): Promise<string | Buffer | null> {
+  async generateImageFromPhoto(
+    image: Buffer,
+    prompt: string,
+  ): Promise<string | Buffer | null> {
     try {
-      const file = await toFile(image, 'image.png');
-      const { data } = await this.openAi.images.createVariation({
+      // изображение конвертируется в PNG и уменьшатся до < 4 МБ
+      const prepared = await this.prepareImage(image);
+      const file = await toFile(prepared, 'image.png', { type: 'image/png' });
+      // Используем ту же модель, что и при обычной генерации,
+      // передавая текст пользователя в качестве промта
+      const { data } = await this.openAi.images.edit({
         image: file,
-        model: 'dall-e-2',
+        prompt,
+        model: 'gpt-image-1',
+        quality: 'low',
         n: 1,
         size: '1024x1024',
-        response_format: 'b64_json',
       });
       if (!data || data.length === 0) {
-        this.logger.error('Image.createVariation вернул пустой data', data);
+        this.logger.error('Image.edit вернул пустой data', data);
         return null;
       }
       const img = data[0];
@@ -185,7 +237,7 @@ export class OpenAiService {
       this.logger.error('Image data не содержит ни b64_json, ни url', img);
       return null;
     } catch (err: any) {
-      this.logger.error('Ошибка при вариации изображения', err);
+      this.logger.error('Ошибка при редактировании изображения', err);
       return null;
     }
   }
@@ -224,7 +276,8 @@ export class OpenAiService {
       }
 
       // загружаем файл для ассистента
-      const fileObj = await toFile(image, 'image.png');
+      const prepared = await this.prepareImage(image);
+      const fileObj = await toFile(prepared, 'image.png', { type: 'image/png' });
       const file = await this.openAi.files.create({
         file: fileObj,
         purpose: 'assistants',
