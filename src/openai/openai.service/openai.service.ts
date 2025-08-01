@@ -41,10 +41,10 @@ export class OpenAiService {
             '-compression_level',
             '9',
           ])
-          .toFormat('png')
-          .save(outPath)
+          .output(outPath)
           .on('end', () => resolve())
-          .on('error', (err: Error) => reject(err));
+          .on('error', (err: Error) => reject(err))
+          .run();
       });
       result = await fs.readFile(outPath);
       if (result.length <= 4 * 1024 * 1024) break;
