@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { OpenAiService } from '../../openai/openai.service/openai.service';
 import fetch from 'node-fetch';
 import * as jwt from 'jsonwebtoken';
 
@@ -9,6 +10,10 @@ export interface VideoGenerationResponse {
   error?: string;
 }
 
+export interface VideoGenerationOptions {
+  onProgress?: (status: string, attempt: number, maxAttempts: number) => void;
+}
+
 @Injectable()
 export class VideoService {
   private readonly logger = new Logger(VideoService.name);
@@ -16,7 +21,10 @@ export class VideoService {
   private readonly klingSecretKey: string;
   private readonly klingApiUrl: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly openaiService: OpenAiService,
+  ) {
     this.klingAccessKey = this.configService.get<string>('KLING_ACCESS_KEY');
     this.klingSecretKey = this.configService.get<string>('KLING_SECRET_KEY');
     this.klingApiUrl = this.configService.get<string>('KLING_API_URL') || 'https://api.klingai.com';
@@ -53,9 +61,10 @@ export class VideoService {
   /**
    * Генерирует видео на основе текстового промпта
    * @param prompt - текстовое описание для генерации видео
+   * @param options - опции для генерации
    * @returns Promise<VideoGenerationResponse> - результат генерации
    */
-  async generateVideo(prompt: string): Promise<VideoGenerationResponse> {
+  async generateVideo(prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
     try {
       if (!this.klingAccessKey || !this.klingSecretKey) {
         return {
@@ -66,6 +75,10 @@ export class VideoService {
 
       this.logger.log(`Начинаю генерацию видео для промпта: ${prompt}`);
 
+      // Оптимизируем промт через ассистента
+      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+
       // Генерируем JWT токен для авторизации
       const jwtToken = this.generateJWTToken();
       this.logger.debug(`JWT токен сгенерирован для запроса`);
@@ -74,8 +87,8 @@ export class VideoService {
       this.logger.debug(`Secret Key: ${this.klingSecretKey ? '***' + this.klingSecretKey.slice(-4) : 'не задан'}`);
 
       const requestBody = {
-        model_name: 'kling-v1-6',
-        prompt: prompt,
+        model_name: 'kling-v2-1-master',
+        prompt: optimizedPrompt,
         duration: '5', // 5 секунд как требовалось (строка согласно документации)
         aspect_ratio: '1:1', // квадратное видео
         mode: 'std', // стандартный режим
@@ -137,7 +150,7 @@ export class VideoService {
           };
         }
         this.logger.log(`Задача отправлена, ID: ${taskId}, статус: ${status}`);
-        return await this.waitForVideoCompletion(taskId);
+        return await this.waitForVideoCompletion(taskId, options);
       } else {
         this.logger.error(`Неожиданный статус ответа: ${status}`);
         this.logger.error(`Полный ответ API: ${JSON.stringify(data)}`);
@@ -160,13 +173,13 @@ export class VideoService {
    * @param videoId - ID видео в API Kling
    * @returns Promise<VideoGenerationResponse>
    */
-  private async waitForVideoCompletion(videoId: string): Promise<VideoGenerationResponse> {
-    const maxAttempts = 60; // максимум 5 минут ожидания (60 * 5 секунд)
+  private async waitForVideoCompletion(videoId: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+    const maxAttempts = 30; // максимум 5 минут ожидания (30 * 10 секунд)
     let attempts = 0;
 
     while (attempts < maxAttempts) {
       try {
-        await new Promise(resolve => setTimeout(resolve, 5000)); // ждем 5 секунд
+        await new Promise(resolve => setTimeout(resolve, 10000)); // ждем 10 секунд
 
         // Генерируем новый JWT токен для каждого запроса
         const jwtToken = this.generateJWTToken();
@@ -226,6 +239,14 @@ export class VideoService {
 
         attempts++;
         this.logger.debug(`Попытка ${attempts}/${maxAttempts}: статус видео - ${status}`);
+        
+        // Вызываем callback для обновления прогресса
+        if (options?.onProgress) {
+          const elapsedSeconds = attempts * 10;
+          const statusText = status === 'submitted' ? 'отправлена' : 
+                           status === 'processing' ? 'обрабатывается' : status;
+          options.onProgress(statusText, attempts, maxAttempts);
+        }
       } catch (error) {
         this.logger.error('Ошибка при проверке статуса видео', error);
         return {

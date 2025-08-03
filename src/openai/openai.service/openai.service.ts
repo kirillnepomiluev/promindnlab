@@ -149,6 +149,9 @@ export class OpenAiService {
     return { text, files };
   }
 
+  // ID ассистента для оптимизации промтов видео
+  private readonly VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID = 'asst_qtXWMEt5EWtSUXTgPEQDqYVM';
+
   // Основной текстовый чат с ассистентом
   async chat(content: string, userId: number): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
@@ -357,6 +360,51 @@ export class OpenAiService {
         text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
         files: [],
       };
+    }
+  }
+
+  /**
+   * Оптимизирует промт для генерации видео через специального ассистента
+   * @param prompt - исходный промт пользователя
+   * @returns Promise<string> - оптимизированный промт
+   */
+  async optimizeVideoPrompt(prompt: string): Promise<string> {
+    try {
+      this.logger.log(`Оптимизирую промт для видео: ${prompt}`);
+      
+      // Создаем новый тред для оптимизации промта
+      const thread = await this.openAi.beta.threads.create();
+      
+      // Добавляем сообщение пользователя в тред
+      await this.openAi.beta.threads.messages.create(thread.id, {
+        role: 'user',
+        content: `Оптимизируй этот промт для генерации видео, сделав его более детальным и подходящим для AI генерации видео: "${prompt}"`,
+      });
+
+      // Генерируем ответ ассистента-оптимизатора
+      const response = await this.openAi.beta.threads.runs.createAndPoll(
+        thread.id,
+        {
+          assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID,
+        },
+      );
+
+      if (response.status === 'completed') {
+        const messages = await this.openAi.beta.threads.messages.list(
+          response.thread_id,
+        );
+        const assistantMessage = messages.data[0];
+        const optimizedPrompt = (assistantMessage.content?.[0] as any)?.text?.value || prompt;
+        
+        this.logger.log(`Промт оптимизирован: ${optimizedPrompt}`);
+        return optimizedPrompt;
+      } else {
+        this.logger.warn(`Ассистент-оптимизатор вернул статус: ${response.status}`);
+        return prompt; // Возвращаем исходный промт если что-то пошло не так
+      }
+    } catch (error) {
+      this.logger.error('Ошибка при оптимизации промта для видео', error);
+      return prompt; // Возвращаем исходный промт в случае ошибки
     }
   }
 

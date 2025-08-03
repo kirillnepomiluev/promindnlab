@@ -127,6 +127,17 @@ export class TelegramService {
     }
   }
 
+  // Обновление прогресса генерации видео
+  private async updateVideoProgress(ctx: Context, messageId: number, status: string, attempt: number, maxAttempts: number) {
+    try {
+      const elapsedSeconds = attempt * 10;
+      const progressText = `СОЗДАЮ ВИДЕО ---- ${elapsedSeconds}с ---- ${status}`;
+      await ctx.telegram.editMessageCaption(ctx.chat.id, messageId, undefined, progressText);
+    } catch (error) {
+      this.logger.error('Ошибка при обновлении прогресса видео', error);
+    }
+  }
+
   // Получить ФИО пользователя из основной базы для отображения
   private getFullName(user: MainUser): string {
     const parts = [] as string[];
@@ -294,15 +305,26 @@ export class TelegramService {
 
         if (q.startsWith('/video')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
-          const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
           const prompt = q.replace('/video', '').trim();
           if (!prompt) {
-            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
             await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
             return;
           }
-          const videoResult = await this.video.generateVideo(prompt);
-          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+          
+          // Отправляем сообщение об оптимизации запроса
+          const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
+          
+          // Генерируем видео (внутри будет оптимизация промта)
+          const videoResult = await this.video.generateVideo(prompt, {
+            onProgress: (status, attempt, maxAttempts) => {
+              // Обновляем сообщение на "СОЗДАЮ ВИДЕО" когда начинается генерация
+              if (attempt === 0) {
+                this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
+              } else {
+                this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
+              }
+            }
+          });
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -333,15 +355,26 @@ export class TelegramService {
 
           if (answer.text.startsWith('/video')) {
             if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
-            const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
             const prompt = answer.text.replace('/video', '').trim();
             if (!prompt) {
-              await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
               await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
               return;
             }
-            const videoResult = await this.video.generateVideo(prompt);
-            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            
+            // Отправляем сообщение об оптимизации запроса
+            const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
+            
+            // Генерируем видео (внутри будет оптимизация промта)
+            const videoResult = await this.video.generateVideo(prompt, {
+              onProgress: (status, attempt, maxAttempts) => {
+                // Обновляем сообщение на "СОЗДАЮ ВИДЕО" когда начинается генерация
+                if (attempt === 0) {
+                  this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
+                } else {
+                  this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
+                }
+              }
+            });
             if (videoResult.success && videoResult.videoUrl) {
               const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
               if (videoBuffer) {
@@ -391,9 +424,21 @@ export class TelegramService {
         const cleaned = text.trim().toLowerCase();
         if (cleaned.startsWith('создай видео') || cleaned.startsWith('video')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
-          const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
-          const videoResult = await this.video.generateVideo(text);
-          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+          
+          // Отправляем сообщение об оптимизации запроса
+          const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
+          
+          // Генерируем видео (внутри будет оптимизация промта)
+          const videoResult = await this.video.generateVideo(text, {
+            onProgress: (status, attempt, maxAttempts) => {
+              // Обновляем сообщение на "СОЗДАЮ ВИДЕО" когда начинается генерация
+              if (attempt === 0) {
+                this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
+              } else {
+                this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
+              }
+            }
+          });
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -420,15 +465,26 @@ export class TelegramService {
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
           if (answer.text.startsWith('/video')) {
             if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
-            const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
             const prompt = answer.text.replace('/video', '').trim();
             if (!prompt) {
-              await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
               await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
               return;
             }
-            const videoResult = await this.video.generateVideo(prompt);
-            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            
+            // Отправляем сообщение об оптимизации запроса
+            const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
+            
+            // Генерируем видео (внутри будет оптимизация промта)
+            const videoResult = await this.video.generateVideo(prompt, {
+              onProgress: (status, attempt, maxAttempts) => {
+                // Обновляем сообщение на "СОЗДАЮ ВИДЕО" когда начинается генерация
+                if (attempt === 0) {
+                  this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
+                } else {
+                  this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
+                }
+              }
+            });
             if (videoResult.success && videoResult.videoUrl) {
               const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
               if (videoBuffer) {
