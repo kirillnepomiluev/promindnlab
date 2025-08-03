@@ -15,7 +15,7 @@ describe('VideoService', () => {
                      get: jest.fn((key: string) => {
                        if (key === 'KLING_ACCESS_KEY') return 'test-access-key';
                        if (key === 'KLING_SECRET_KEY') return 'test-secret-key';
-                       if (key === 'KLING_API_URL') return 'https://api.kling.com';
+                                               if (key === 'KLING_API_URL') return 'https://api.klingai.com';
                        return null;
                      }),
                    },

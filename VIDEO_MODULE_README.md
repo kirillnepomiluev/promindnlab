@@ -23,7 +23,7 @@
 KLING_ACCESS_KEY=your_kling_access_key
 KLING_SECRET_KEY=your_kling_secret_key
 # Необязательный параметр: кастомный URL API Kling
-KLING_API_URL=https://api.kling.com
+KLING_API_URL=https://api.klingai.com
 ```
 
 ### 2. Получение API ключей Kling
@@ -77,10 +77,11 @@ src/video/
 ### API Kling
 
 Модуль использует следующие параметры для генерации:
+- **Эндпоинт**: `/v1/videos/text2video`
+- **Модель**: kling-v1-6
 - **Длительность**: 5 секунд
 - **Соотношение сторон**: 1:1 (квадратное)
-- **Частота кадров**: 24 FPS
-- **Качество**: среднее
+- **Режим**: std (стандартный)
 - **Аутентификация**: JWT токены (генерируются автоматически из Access Key и Secret Key)
 
 ### Обработка ошибок

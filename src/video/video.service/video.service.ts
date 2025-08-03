@@ -19,7 +19,7 @@ export class VideoService {
   constructor(private readonly configService: ConfigService) {
     this.klingAccessKey = this.configService.get<string>('KLING_ACCESS_KEY');
     this.klingSecretKey = this.configService.get<string>('KLING_SECRET_KEY');
-    this.klingApiUrl = this.configService.get<string>('KLING_API_URL') || 'https://api.kling.com';
+    this.klingApiUrl = this.configService.get<string>('KLING_API_URL') || 'https://api.klingai.com';
     
     if (!this.klingAccessKey || !this.klingSecretKey) {
       this.logger.error('KLING_ACCESS_KEY или KLING_SECRET_KEY не заданы в переменных окружения');
@@ -68,26 +68,39 @@ export class VideoService {
 
       // Генерируем JWT токен для авторизации
       const jwtToken = this.generateJWTToken();
+      this.logger.debug(`JWT токен сгенерирован для запроса`);
+      this.logger.debug(`JWT токен: ${jwtToken}`);
+      this.logger.debug(`Access Key: ${this.klingAccessKey}`);
+      this.logger.debug(`Secret Key: ${this.klingSecretKey ? '***' + this.klingSecretKey.slice(-4) : 'не задан'}`);
+
+      const requestBody = {
+        model_name: 'kling-v1-6',
+        prompt: prompt,
+        duration: '5', // 5 секунд как требовалось (строка согласно документации)
+        aspect_ratio: '1:1', // квадратное видео
+        mode: 'std', // стандартный режим
+      };
+
+      this.logger.debug(`Отправляю запрос на ${this.klingApiUrl}/v1/videos/text2video`);
+      this.logger.debug(`Тело запроса: ${JSON.stringify(requestBody)}`);
+
+      const headers = {
+        'Authorization': `Bearer ${jwtToken}`,
+        'Content-Type': 'application/json',
+      };
+      this.logger.debug(`Заголовки запроса: ${JSON.stringify(headers)}`);
 
       // Создаем запрос на генерацию видео
-      const response = await fetch(`${this.klingApiUrl}/v1/videos/generations`, {
+      const response = await fetch(`${this.klingApiUrl}/v1/videos/text2video`, {
         method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${jwtToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          prompt: prompt,
-          duration: 5, // 5 секунд как требовалось
-          aspect_ratio: '1:1', // квадратное видео
-          fps: 24,
-          quality: 'medium',
-        }),
+        headers: headers,
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.error(`Ошибка API Kling: ${response.status} - ${errorText}`);
+        this.logger.error(`Заголовки ответа: ${JSON.stringify(Object.fromEntries(response.headers.entries()))}`);
         return {
           success: false,
           error: `Ошибка API: ${response.status}`,
@@ -95,21 +108,42 @@ export class VideoService {
       }
 
       const data = await response.json();
+      this.logger.debug(`Получен ответ от API: ${JSON.stringify(data)}`);
+      this.logger.debug(`Тип данных: ${typeof data}`);
+      this.logger.debug(`Ключи в ответе: ${Object.keys(data || {}).join(', ')}`);
       
-      if (data.status === 'completed' && data.video_url) {
-        this.logger.log('Видео успешно сгенерировано');
-        return {
-          success: true,
-          videoUrl: data.video_url,
-        };
-      } else if (data.status === 'processing') {
+      // Проверяем различные возможные структуры ответа
+      const status = data?.status || data?.data?.status || data?.data?.task_status || data?.result?.status;
+      const videoUrl = data?.video_url || data?.url || data?.data?.video_url || data?.data?.url;
+      const taskId = data?.id || data?.task_id || data?.data?.id || data?.data?.task_id;
+      
+      this.logger.debug(`Извлеченный статус: ${status}`);
+      this.logger.debug(`Извлеченный URL видео: ${videoUrl}`);
+      this.logger.debug(`Извлеченный ID задачи: ${taskId}`);
+      
+             if (status === 'succeed' && videoUrl) {
+         this.logger.log('Видео успешно сгенерировано');
+         return {
+           success: true,
+           videoUrl: videoUrl,
+         };
+       } else if (status === 'processing' || status === 'submitted') {
         // Если видео еще обрабатывается, ждем и проверяем статус
-        return await this.waitForVideoCompletion(data.id);
+        if (!taskId) {
+          this.logger.error('Отсутствует ID задачи для отслеживания статуса');
+          return {
+            success: false,
+            error: 'Отсутствует ID задачи для отслеживания статуса',
+          };
+        }
+        this.logger.log(`Задача отправлена, ID: ${taskId}, статус: ${status}`);
+        return await this.waitForVideoCompletion(taskId);
       } else {
-        this.logger.error(`Неожиданный статус ответа: ${data.status}`);
+        this.logger.error(`Неожиданный статус ответа: ${status}`);
+        this.logger.error(`Полный ответ API: ${JSON.stringify(data)}`);
         return {
           success: false,
-          error: `Неожиданный статус: ${data.status}`,
+          error: `Неожиданный статус: ${status || 'undefined'}`,
         };
       }
     } catch (error) {
@@ -137,14 +171,26 @@ export class VideoService {
         // Генерируем новый JWT токен для каждого запроса
         const jwtToken = this.generateJWTToken();
         
-        const response = await fetch(`${this.klingApiUrl}/v1/videos/${videoId}`, {
+        const statusUrl = `${this.klingApiUrl}/v1/videos/text2video/${videoId}`;
+        this.logger.debug(`Проверяю статус по URL: ${statusUrl}`);
+        
+        const response = await fetch(statusUrl, {
           headers: {
             'Authorization': `Bearer ${jwtToken}`,
           },
         });
 
         if (!response.ok) {
-          this.logger.error(`Ошибка при проверке статуса видео: ${response.status}`);
+          const errorText = await response.text();
+          this.logger.error(`Ошибка при проверке статуса видео: ${response.status} - ${errorText}`);
+          
+          // Если это временная ошибка (400, 500), продолжаем попытки
+          if (response.status >= 400 && response.status < 600) {
+            this.logger.warn(`Временная ошибка API (${response.status}), продолжаю попытки...`);
+            attempts++;
+            continue;
+          }
+          
           return {
             success: false,
             error: 'Ошибка при проверке статуса видео',
@@ -152,23 +198,34 @@ export class VideoService {
         }
 
         const data = await response.json();
+        this.logger.debug(`Получен ответ при проверке статуса: ${JSON.stringify(data)}`);
 
-        if (data.status === 'completed' && data.video_url) {
+        // Проверяем различные возможные структуры ответа согласно документации
+        const status = data?.data?.task_status || data?.status || data?.data?.status || data?.result?.status;
+        const videoUrl = data?.data?.task_result?.videos?.[0]?.url || data?.video_url || data?.url || data?.data?.video_url || data?.data?.url;
+        const error = data?.data?.task_status_msg || data?.error || data?.message || data?.data?.error || data?.data?.message;
+
+        this.logger.debug(`Извлеченный статус при проверке: ${status}`);
+        this.logger.debug(`Извлеченный URL видео при проверке: ${videoUrl}`);
+
+        if (status === 'succeed' && videoUrl) {
           this.logger.log('Видео успешно сгенерировано после ожидания');
           return {
             success: true,
-            videoUrl: data.video_url,
+            videoUrl: videoUrl,
           };
-        } else if (data.status === 'failed') {
-          this.logger.error(`Генерация видео завершилась с ошибкой: ${data.error}`);
+        } else if (status === 'failed') {
+          this.logger.error(`Генерация видео завершилась с ошибкой: ${error}`);
           return {
             success: false,
-            error: data.error || 'Генерация видео завершилась с ошибкой',
+            error: error || 'Генерация видео завершилась с ошибкой',
           };
+        } else if (status === 'submitted' || status === 'processing') {
+          this.logger.debug(`Задача все еще обрабатывается, статус: ${status}`);
         }
 
         attempts++;
-        this.logger.debug(`Попытка ${attempts}/${maxAttempts}: статус видео - ${data.status}`);
+        this.logger.debug(`Попытка ${attempts}/${maxAttempts}: статус видео - ${status}`);
       } catch (error) {
         this.logger.error('Ошибка при проверке статуса видео', error);
         return {
