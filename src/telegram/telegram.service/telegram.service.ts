@@ -6,6 +6,7 @@ import * as path from 'path';
 import fetch from 'node-fetch';
 import { OpenAiService } from '../../openai/openai.service/openai.service';
 import { VoiceService } from '../../voice/voice.service/voice.service';
+import { VideoService } from '../../video/video.service/video.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { UserProfile } from '../../user/entities/user-profile.entity';
@@ -25,6 +26,7 @@ export class TelegramService {
   // Стоимость операций в токенах
   private readonly COST_TEXT = 1;
   private readonly COST_IMAGE = 10;
+  private readonly COST_VIDEO = 200; // стоимость генерации видео
   private readonly COST_VOICE_RECOGNITION = 1;
   private readonly COST_VOICE_REPLY_EXTRA = 3; // после распознавания
   // обработка документа
@@ -44,6 +46,7 @@ export class TelegramService {
     @InjectBot() private readonly bot: Telegraf<Context>,
     private readonly openai: OpenAiService,
     private readonly voice: VoiceService,
+    private readonly video: VideoService,
     private readonly cfg: ConfigService,
     @InjectRepository(UserProfile)
     private readonly profileRepo: Repository<UserProfile>,
@@ -110,6 +113,17 @@ export class TelegramService {
   ) {
     for (const f of files) {
       await ctx.replyWithDocument({ source: f.buffer, filename: f.filename });
+    }
+  }
+
+  // Отправка видео пользователю
+  private async sendVideo(ctx: Context, videoBuffer: Buffer, caption?: string) {
+    try {
+      await ctx.replyWithVideo({ source: videoBuffer }, caption ? { caption } : undefined);
+    } catch (error) {
+      this.logger.error('Ошибка при отправке видео', error);
+      // Если не удалось отправить как видео, пробуем как документ
+      await ctx.replyWithDocument({ source: videoBuffer, filename: 'generated_video.mp4' });
     }
   }
 
@@ -273,12 +287,33 @@ export class TelegramService {
         if (!user) return;
         if (!q) return;
 
-        // пропускаем другие команды, кроме '/image', чтобы они обработались далее
-        if (q.startsWith('/') && !q.startsWith('/image') && !q.startsWith('/imagine')) {
+        // пропускаем другие команды, кроме '/image', '/video', чтобы они обработались далее
+        if (q.startsWith('/') && !q.startsWith('/image') && !q.startsWith('/imagine') && !q.startsWith('/video')) {
           return next();
         }
 
-        if (q.startsWith('/image')) {
+        if (q.startsWith('/video')) {
+          if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
+          const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
+          const prompt = q.replace('/video', '').trim();
+          if (!prompt) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+            return;
+          }
+          const videoResult = await this.video.generateVideo(prompt);
+          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+          if (videoResult.success && videoResult.videoUrl) {
+            const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
+            if (videoBuffer) {
+              await this.sendVideo(ctx, videoBuffer, `Видео по запросу: "${prompt}"`);
+            } else {
+              await ctx.reply('Не удалось скачать сгенерированное видео');
+            }
+          } else {
+            await ctx.reply(`Не удалось сгенерировать видео: ${videoResult.error}`);
+          }
+        } else if (q.startsWith('/image')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = q.replace('/image', '').trim();
@@ -296,7 +331,28 @@ export class TelegramService {
           const answer = await this.openai.chat(q, ctx.message.from.id);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-          if (answer.text.startsWith('/imagine')) {
+          if (answer.text.startsWith('/video')) {
+            if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
+            const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
+            const prompt = answer.text.replace('/video', '').trim();
+            if (!prompt) {
+              await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+              await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+              return;
+            }
+            const videoResult = await this.video.generateVideo(prompt);
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            if (videoResult.success && videoResult.videoUrl) {
+              const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
+              if (videoBuffer) {
+                await this.sendVideo(ctx, videoBuffer, `Видео по запросу: "${prompt}"`);
+              } else {
+                await ctx.reply('Не удалось скачать сгенерированное видео');
+              }
+            } else {
+              await ctx.reply(`Не удалось сгенерировать видео: ${videoResult.error}`);
+            }
+          } else if (answer.text.startsWith('/imagine')) {
             if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
             const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
             const prompt = answer.text.replace('/imagine', '').trim();
@@ -333,7 +389,22 @@ export class TelegramService {
         if (!text) return;
 
         const cleaned = text.trim().toLowerCase();
-        if (cleaned.startsWith('нарисуй') || cleaned.startsWith('imagine')) {
+        if (cleaned.startsWith('создай видео') || cleaned.startsWith('video')) {
+          if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
+          const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
+          const videoResult = await this.video.generateVideo(text);
+          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+          if (videoResult.success && videoResult.videoUrl) {
+            const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
+            if (videoBuffer) {
+              await this.sendVideo(ctx, videoBuffer, `Видео по запросу: "${text}"`);
+            } else {
+              await ctx.reply('Не удалось скачать сгенерированное видео');
+            }
+          } else {
+            await ctx.reply(`Не удалось сгенерировать видео: ${videoResult.error}`);
+          }
+        } else if (cleaned.startsWith('нарисуй') || cleaned.startsWith('imagine')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const image = await this.openai.generateImage(text);
@@ -347,7 +418,28 @@ export class TelegramService {
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
           const answer = await this.openai.chat(text, ctx.message.from.id);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
-          if (answer.text.startsWith('/imagine')) {
+          if (answer.text.startsWith('/video')) {
+            if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
+            const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'СОЗДАЮ ВИДЕО ...');
+            const prompt = answer.text.replace('/video', '').trim();
+            if (!prompt) {
+              await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+              await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+              return;
+            }
+            const videoResult = await this.video.generateVideo(prompt);
+            await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+            if (videoResult.success && videoResult.videoUrl) {
+              const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
+              if (videoBuffer) {
+                await this.sendVideo(ctx, videoBuffer, `Видео по запросу: "${prompt}"`);
+              } else {
+                await ctx.reply('Не удалось скачать сгенерированное видео');
+              }
+            } else {
+              await ctx.reply(`Не удалось сгенерировать видео: ${videoResult.error}`);
+            }
+          } else if (answer.text.startsWith('/imagine')) {
             if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
             const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
             const prompt = answer.text.replace('/imagine', '').trim();

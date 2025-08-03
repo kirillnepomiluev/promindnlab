@@ -5,6 +5,7 @@ import { getBotToken } from 'nestjs-telegraf';
 import { DEFAULT_BOT_NAME } from 'nestjs-telegraf/dist/telegraf.constants';
 import { OpenAiService } from '../../openai/openai.service/openai.service';
 import { VoiceService } from '../../voice/voice.service/voice.service';
+import { VideoService } from '../../video/video.service/video.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { UserProfile } from '../../user/entities/user-profile.entity';
 import { UserTokens } from '../../user/entities/user-tokens.entity';
@@ -34,6 +35,7 @@ describe('TelegramService', () => {
         },
         { provide: OpenAiService, useValue: {} },
         { provide: VoiceService, useValue: {} },
+        { provide: VideoService, useValue: {} },
         { provide: ConfigService, useValue: { get: jest.fn(() => '') } },
         { provide: getRepositoryToken(UserProfile), useValue: {} },
         { provide: getRepositoryToken(UserTokens), useValue: {} },

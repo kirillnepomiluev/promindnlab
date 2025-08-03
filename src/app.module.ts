@@ -6,6 +6,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TelegramModule } from './telegram/telegram.module';
 import { OpenaiModule } from './openai/openai.module';
 import { VoiceModule } from './voice/voice.module';
+import { VideoModule } from './video/video.module';
 
 @Module({
   imports: [
@@ -48,6 +49,7 @@ import { VoiceModule } from './voice/voice.module';
     TelegramModule,
     OpenaiModule,
     VoiceModule,
+    VideoModule,
   ],
   //  synchronize: true,
   controllers: [AppController],

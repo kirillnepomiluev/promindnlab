@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TelegramService } from './telegram.service/telegram.service';
 import { OpenaiModule } from 'src/openai/openai.module';
 import { VoiceModule } from 'src/voice/voice.module';
+import { VideoModule } from 'src/video/video.module';
 import { TelegrafModule } from 'nestjs-telegraf';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
@@ -29,6 +30,7 @@ import { Item } from '../external/entities/item.entity';
     TypeOrmModule.forFeature([MainUser, MainOrder, MainOrderItem, Item], 'mainDb'),
     OpenaiModule,
     VoiceModule,
+    VideoModule,
   ],
   providers: [TelegramService],
 })
