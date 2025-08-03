@@ -27,6 +27,8 @@ export class TelegramService {
   private readonly COST_IMAGE = 10;
   private readonly COST_VOICE_RECOGNITION = 1;
   private readonly COST_VOICE_REPLY_EXTRA = 3; // после распознавания
+  // обработка документа
+  private readonly COST_FILE = 2;
   // временное хранилище для незарегистрированных пользователей,
   // которые перешли по пригласительной ссылке
   private pendingInvites = new Map<number, string>();
@@ -397,6 +399,40 @@ export class TelegramService {
       } catch (err) {
         this.logger.error('Ошибка обработки фото', err);
         await ctx.reply('Произошла ошибка при обработке изображения');
+      }
+    });
+
+    // обработка документов (pdf, doc и др.)
+    this.bot.on('document', async (ctx) => {
+      try {
+        const caption = ctx.message.caption?.trim() ?? '';
+        const user = await this.ensureUser(ctx);
+        if (!user) return;
+
+        const doc = ctx.message.document;
+        const link = await ctx.telegram.getFileLink(doc.file_id);
+        const res = await fetch(link.href);
+        if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
+        const buffer = Buffer.from(await res.arrayBuffer());
+
+        if (!(await this.chargeTokens(ctx, user, this.COST_FILE))) return;
+
+        const thinkingMsg = await this.sendAnimation(
+          ctx,
+          'thinking_pen_a.mp4',
+          'ДУМАЮ ...',
+        );
+        const answer = await this.openai.chatWithFile(
+          caption || ' ',
+          ctx.message.from.id,
+          buffer,
+          doc.file_name || 'file',
+        );
+        await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
+        await ctx.reply(answer);
+      } catch (err) {
+        this.logger.error('Ошибка обработки документа', err);
+        await ctx.reply('Произошла ошибка при обработке документа');
       }
     });
 

@@ -313,4 +313,82 @@ export class OpenAiService {
       return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
     }
   }
+
+  /**
+   * Отправляет файл вместе с текстом в ассистента
+   * content - текстовое сообщение пользователя
+   * fileBuffer - содержимое файла
+   * filename - имя файла (нужно для корректной передачи в API)
+   */
+  async chatWithFile(
+    content: string,
+    userId: number,
+    fileBuffer: Buffer,
+    filename: string,
+  ): Promise<string> {
+    let threadId = await this.sessionService.getSessionId(userId);
+    if (threadId) {
+      this.threadMap.set(userId, threadId);
+    }
+    let thread: { id: string };
+    const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
+    try {
+      if (!threadId) {
+        thread = await this.openAi.beta.threads.create();
+        threadId = thread.id;
+        this.threadMap.set(userId, threadId);
+        await this.sessionService.setSessionId(userId, threadId);
+      } else {
+        thread = { id: threadId };
+      }
+
+      const runs = await this.openAi.beta.threads.runs.list(threadId);
+      const activeRun = runs.data.find(
+        (run) => run.status === 'in_progress' || run.status === 'queued',
+      );
+
+      if (activeRun) {
+        await this.waitForRunCompletion(threadId, activeRun.id);
+      }
+
+      // загружаем файл для ассистента
+      const fileObj = await toFile(fileBuffer, filename);
+      const file = await this.openAi.files.create({
+        file: fileObj,
+        purpose: 'assistants',
+      });
+
+      await this.openAi.beta.threads.messages.create(thread.id, {
+        role: 'user',
+        content,
+        attachments: [
+          {
+            file_id: file.id,
+            tools: [{ type: 'file_search' }],
+          },
+        ],
+      });
+
+      const response = await this.openAi.beta.threads.runs.createAndPoll(
+        thread.id,
+        {
+          assistant_id: assistantId,
+        },
+      );
+      if (response.status === 'completed') {
+        const messages = await this.openAi.beta.threads.messages.list(
+          response.thread_id,
+        );
+        const assistantMessage = messages.data[0];
+        if (assistantMessage.content[0].type == 'text') {
+          const answer: TextContentBlock = assistantMessage.content[0];
+          return answer.text.value;
+        }
+      }
+      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+    } catch (error) {
+      this.logger.error('Ошибка при отправке сообщения с файлом', error);
+      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+    }
+  }
 }
