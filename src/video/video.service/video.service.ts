@@ -87,7 +87,7 @@ export class VideoService {
       this.logger.debug(`Secret Key: ${this.klingSecretKey ? '***' + this.klingSecretKey.slice(-4) : 'не задан'}`);
 
       const requestBody = {
-        model_name: 'kling-v2-1-master',
+        model_name: 'kling-v1-6',
         prompt: optimizedPrompt,
         duration: '5', // 5 секунд как требовалось (строка согласно документации)
         aspect_ratio: '1:1', // квадратное видео
