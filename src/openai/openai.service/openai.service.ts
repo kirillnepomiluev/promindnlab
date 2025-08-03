@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
-import { TextContentBlock } from 'openai/resources/beta/threads/messages';
 import { toFile } from 'openai/uploads';
 import * as fs from 'fs/promises';
 import * as os from 'os';
@@ -13,6 +12,18 @@ const ffmpeg = require('fluent-ffmpeg');
 const ffmpegPath = require('ffmpeg-static');
 ffmpeg.setFfmpegPath(ffmpegPath);
 import { SessionService } from '../../session/session.service';
+
+// Описание возвращаемого файла от OpenAI
+export interface OpenAiFile {
+  filename: string;
+  buffer: Buffer;
+}
+
+// Структура ответа ассистента: текст + возможные файлы
+export interface OpenAiAnswer {
+  text: string;
+  files: OpenAiFile[];
+}
 
 @Injectable()
 export class OpenAiService {
@@ -97,7 +108,49 @@ export class OpenAiService {
     console.log(`Run ${runId} завершен со статусом: ${runStatus}`);
   }
 
-  async chat(content: string, userId: number) {
+  // Разбор сообщения ассистента: извлекаем текст и скачиваем приложенные файлы
+  private async buildAnswer(assistantMessage: any): Promise<OpenAiAnswer> {
+    let text = '';
+    const fileIds = new Set<string>();
+
+    // Собираем текстовые блоки и ищем ссылки на файлы в аннотациях
+    for (const part of assistantMessage.content || []) {
+      if (part.type === 'text') {
+        text += (text ? '\n' : '') + part.text.value;
+        part.text.annotations?.forEach((ann: any) => {
+          if (ann.type === 'file_path' && ann.file_path?.file_id) {
+            fileIds.add(ann.file_path.file_id);
+          }
+        });
+      } else if (part.type === 'image_file' && part.image_file?.file_id) {
+        fileIds.add(part.image_file.file_id);
+      }
+    }
+
+    // Также учитываем явно прикреплённые файлы
+    assistantMessage.attachments?.forEach((att: any) => {
+      if (att.file_id) fileIds.add(att.file_id);
+    });
+
+    const files: OpenAiFile[] = [];
+    for (const id of fileIds) {
+      try {
+        // Получаем метаданные файла для имени
+        const meta = await this.openAi.files.retrieve(id);
+        // Скачиваем содержимое файла
+        const res = await this.openAi.files.content(id);
+        const buffer = Buffer.from(await res.arrayBuffer());
+        files.push({ filename: meta.filename ?? id, buffer });
+      } catch (err) {
+        this.logger.error(`Не удалось скачать файл ${id}`, err as Error);
+      }
+    }
+
+    return { text, files };
+  }
+
+  // Основной текстовый чат с ассистентом
+  async chat(content: string, userId: number): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -143,32 +196,22 @@ export class OpenAiService {
         },
       );
       if (response.status === 'completed') {
-        // const tokensUsed = response.usage?.total_tokens ?? 0;
-
         const messages = await this.openAi.beta.threads.messages.list(
           response.thread_id,
         );
-        // for (const message of messages.data.reverse()) {
-        //   //console.log(`${message.role} > ${message.content[0].text.value}`);
-        // }
-
         const assistantMessage = messages.data[0];
-        if (assistantMessage.content[0].type == 'text') {
-          const answer: TextContentBlock = assistantMessage.content[0];
-
-          return answer.text.value;
-        }
+        return await this.buildAnswer(assistantMessage);
       } else {
         console.log(response.status);
       }
-
-      // Предполагается, что response содержит массив messages,
-      // где последний элемент - ответ ассистента
     } catch (error) {
       console.error(error);
       console.log(error);
-      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
     }
+    return {
+      text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+      files: [],
+    };
   }
 
   async generateImage(prompt: string): Promise<string | Buffer | null> {
@@ -249,7 +292,7 @@ export class OpenAiService {
     content: string,
     userId: number,
     image: Buffer,
-  ): Promise<string> {
+  ): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -302,15 +345,18 @@ export class OpenAiService {
           response.thread_id,
         );
         const assistantMessage = messages.data[0];
-        if (assistantMessage.content[0].type == 'text') {
-          const answer: TextContentBlock = assistantMessage.content[0];
-          return answer.text.value;
-        }
+        return await this.buildAnswer(assistantMessage);
       }
-      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+      return {
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        files: [],
+      };
     } catch (error) {
       this.logger.error('Ошибка при отправке сообщения с картинкой', error);
-      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+      return {
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        files: [],
+      };
     }
   }
 
@@ -325,7 +371,7 @@ export class OpenAiService {
     userId: number,
     fileBuffer: Buffer,
     filename: string,
-  ): Promise<string> {
+  ): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -380,15 +426,18 @@ export class OpenAiService {
           response.thread_id,
         );
         const assistantMessage = messages.data[0];
-        if (assistantMessage.content[0].type == 'text') {
-          const answer: TextContentBlock = assistantMessage.content[0];
-          return answer.text.value;
-        }
+        return await this.buildAnswer(assistantMessage);
       }
-      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+      return {
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        files: [],
+      };
     } catch (error) {
       this.logger.error('Ошибка при отправке сообщения с файлом', error);
-      return '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже';
+      return {
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        files: [],
+      };
     }
   }
 }

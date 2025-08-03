@@ -103,6 +103,16 @@ export class TelegramService {
     return ctx.replyWithAnimation({ source: filePath }, caption ? { caption } : undefined);
   }
 
+  // Отправка списка файлов пользователю
+  private async sendFiles(
+    ctx: Context,
+    files: { filename: string; buffer: Buffer }[],
+  ) {
+    for (const f of files) {
+      await ctx.replyWithDocument({ source: f.buffer, filename: f.filename });
+    }
+  }
+
   // Получить ФИО пользователя из основной базы для отображения
   private getFullName(user: MainUser): string {
     const parts = [] as string[];
@@ -286,10 +296,10 @@ export class TelegramService {
           const answer = await this.openai.chat(q, ctx.message.from.id);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-          if (answer.startsWith('/imagine')) {
+          if (answer.text.startsWith('/imagine')) {
             if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
             const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
-            const prompt = answer.replace('/imagine', '').trim();
+            const prompt = answer.text.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
             await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
             if (image) {
@@ -299,7 +309,10 @@ export class TelegramService {
             }
           } else {
             if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
-            await ctx.reply(answer);
+            await ctx.reply(answer.text);
+          }
+          if (answer.files.length) {
+            await this.sendFiles(ctx, answer.files);
           }
         }
       } catch (err) {
@@ -334,10 +347,10 @@ export class TelegramService {
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
           const answer = await this.openai.chat(text, ctx.message.from.id);
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
-          if (answer.startsWith('/imagine')) {
+          if (answer.text.startsWith('/imagine')) {
             if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
             const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
-            const prompt = answer.replace('/imagine', '').trim();
+            const prompt = answer.text.replace('/imagine', '').trim();
             const image = await this.openai.generateImage(prompt);
             await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
             if (image) {
@@ -348,14 +361,17 @@ export class TelegramService {
           } else {
             if (!(await this.chargeTokens(ctx, user, this.COST_VOICE_REPLY_EXTRA))) return;
             const recordMsg = await this.sendAnimation(ctx, 'play_a.mp4', 'ЗАПИСЫВАЮ ...');
-            const ogg = await this.voice.textToSpeech(answer);
+            const ogg = await this.voice.textToSpeech(answer.text);
             await ctx.telegram.deleteMessage(ctx.chat.id, recordMsg.message_id);
             try {
               await ctx.replyWithVoice({ source: ogg });
             } catch (err) {
               this.logger.warn('Голосовые сообщения запрещены', err);
-              await ctx.reply(answer);
+              await ctx.reply(answer.text);
             }
+          }
+          if (answer.files.length) {
+            await this.sendFiles(ctx, answer.files);
           }
         }
       } catch (err) {
@@ -392,9 +408,16 @@ export class TelegramService {
         } else {
           if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
-          const answer = await this.openai.chatWithImage(caption, ctx.message.from.id, buffer);
+          const answer = await this.openai.chatWithImage(
+            caption,
+            ctx.message.from.id,
+            buffer,
+          );
           await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
-          await ctx.reply(answer);
+          await ctx.reply(answer.text);
+          if (answer.files.length) {
+            await this.sendFiles(ctx, answer.files);
+          }
         }
       } catch (err) {
         this.logger.error('Ошибка обработки фото', err);
@@ -429,7 +452,10 @@ export class TelegramService {
           doc.file_name || 'file',
         );
         await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
-        await ctx.reply(answer);
+        await ctx.reply(answer.text);
+        if (answer.files.length) {
+          await this.sendFiles(ctx, answer.files);
+        }
       } catch (err) {
         this.logger.error('Ошибка обработки документа', err);
         await ctx.reply('Произошла ошибка при обработке документа');
