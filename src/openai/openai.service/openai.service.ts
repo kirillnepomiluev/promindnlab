@@ -32,8 +32,8 @@ export class OpenAiService {
   private threadMap: Map<number, string> = new Map();
 
   /**
-   * Подготавливает изображение для отправки в OpenAI: конвертирует в PNG,
-   * уменьшает размеры до требуемых и гарантирует объём < 4 MB.
+   * Подготавливает изображение для отправки в OpenAI: конвертирует в PNG
+   * без изменения размеров и без дополнительного сжатия.
    */
   private async prepareImage(image: Buffer): Promise<Buffer> {
     const tmpDir = os.tmpdir();
@@ -41,27 +41,16 @@ export class OpenAiService {
     const outPath = path.join(tmpDir, `${crypto.randomUUID()}.png`);
     await fs.writeFile(inputPath, image);
 
-    let size = 1024;
-    let result: Buffer = image;
-    while (size >= 256) {
-      await new Promise<void>((resolve, reject) => {
-        ffmpeg(inputPath)
-          .outputOptions([
-            '-vf',
-            `scale=${size}:${size}`,
-            '-compression_level',
-            '9',
-          ])
-          .output(outPath)
-          .on('end', () => resolve())
-          .on('error', (err: Error) => reject(err))
-          .run();
-      });
-      result = await fs.readFile(outPath);
-      if (result.length <= 4 * 1024 * 1024) break;
-      size = Math.floor(size / 2);
-    }
+    await new Promise<void>((resolve, reject) => {
+      ffmpeg(inputPath)
+        .outputOptions(['-compression_level', '0'])
+        .output(outPath)
+        .on('end', () => resolve())
+        .on('error', (err: Error) => reject(err))
+        .run();
+    });
 
+    const result = await fs.readFile(outPath);
     await Promise.allSettled([fs.unlink(inputPath), fs.unlink(outPath)]);
     return result;
   }
@@ -75,19 +64,13 @@ export class OpenAiService {
       throw new Error('Не задана переменная окружения OPENAI_API_KEY_PRO');
     }
     this.logger.debug(`Raw OpenAI API key length: ${rawKey.length}`);
-    this.logger.debug(
-      `API raw key fragment: ${rawKey.slice(0, 5)}...${rawKey.slice(-5)}`,
-    );
+    this.logger.debug(`API raw key fragment: ${rawKey.slice(0, 5)}...${rawKey.slice(-5)}`);
     // Удаляем BOM и переносы
     const key = rawKey.replace(/\s+/g, '').trim();
-    this.logger.debug(
-      `API key fragment: ${key.slice(0, 5)}...${key.slice(-5)}`,
-    );
+    this.logger.debug(`API key fragment: ${key.slice(0, 5)}...${key.slice(-5)}`);
     this.logger.debug(`Sanitized OpenAI API key length: ${key.length}`);
 
-    const baseURL =
-      this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() ||
-      'https://chat.neurolabtg.ru/v1';
+    const baseURL = this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() || 'https://chat.neurolabtg.ru/v1';
 
     this.openAi = new OpenAI({
       apiKey: key,
@@ -174,14 +157,10 @@ export class OpenAiService {
       }
       // === Проверяем, есть ли активный run ===
       const runs = await this.openAi.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(
-        (run) => run.status === 'in_progress' || run.status === 'queued',
-      );
+      const activeRun = runs.data.find((run) => run.status === 'in_progress' || run.status === 'queued');
 
       if (activeRun) {
-        console.log(
-          `Активный run уже выполняется для thread ${threadId}. Ждем завершения...`,
-        );
+        console.log(`Активный run уже выполняется для thread ${threadId}. Ждем завершения...`);
         await this.waitForRunCompletion(threadId, activeRun.id);
       }
 
@@ -192,16 +171,11 @@ export class OpenAiService {
       });
 
       // Генерируем ответ ассистента по треду
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: assistantId,
-        },
-      );
+      const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+        assistant_id: assistantId,
+      });
       if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
-        );
+        const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
         const assistantMessage = messages.data[0];
         return await this.buildAnswer(assistantMessage);
       } else {
@@ -251,12 +225,9 @@ export class OpenAiService {
    * Генерирует изображение на основе присланной пользователем картинки
    * с помощью endpoint'a createVariation
    */
-  async generateImageFromPhoto(
-    image: Buffer,
-    prompt: string,
-  ): Promise<string | Buffer | null> {
+  async generateImageFromPhoto(image: Buffer, prompt: string): Promise<string | Buffer | null> {
     try {
-      // изображение конвертируется в PNG и уменьшатся до < 4 МБ
+      // изображение конвертируется в PNG без дополнительного сжатия
       const prepared = await this.prepareImage(image);
       const file = await toFile(prepared, 'image.png', { type: 'image/png' });
       // Используем ту же модель, что и при обычной генерации,
@@ -291,11 +262,7 @@ export class OpenAiService {
   /**
    * Отправляет в ассистента сообщение вместе с картинкой
    */
-  async chatWithImage(
-    content: string,
-    userId: number,
-    image: Buffer,
-  ): Promise<OpenAiAnswer> {
+  async chatWithImage(content: string, userId: number, image: Buffer): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -313,9 +280,7 @@ export class OpenAiService {
       }
 
       const runs = await this.openAi.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(
-        (run) => run.status === 'in_progress' || run.status === 'queued',
-      );
+      const activeRun = runs.data.find((run) => run.status === 'in_progress' || run.status === 'queued');
 
       if (activeRun) {
         await this.waitForRunCompletion(threadId, activeRun.id);
@@ -337,16 +302,11 @@ export class OpenAiService {
         ],
       });
 
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: assistantId,
-        },
-      );
+      const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+        assistant_id: assistantId,
+      });
       if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
-        );
+        const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
         const assistantMessage = messages.data[0];
         return await this.buildAnswer(assistantMessage);
       }
@@ -371,10 +331,10 @@ export class OpenAiService {
   async optimizeVideoPrompt(prompt: string): Promise<string> {
     try {
       this.logger.log(`Оптимизирую промт для видео: ${prompt}`);
-      
+
       // Создаем новый тред для оптимизации промта
       const thread = await this.openAi.beta.threads.create();
-      
+
       // Добавляем сообщение пользователя в тред
       await this.openAi.beta.threads.messages.create(thread.id, {
         role: 'user',
@@ -382,20 +342,15 @@ export class OpenAiService {
       });
 
       // Генерируем ответ ассистента-оптимизатора
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID,
-        },
-      );
+      const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+        assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID,
+      });
 
       if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
-        );
+        const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
         const assistantMessage = messages.data[0];
         const optimizedPrompt = (assistantMessage.content?.[0] as any)?.text?.value || prompt;
-        
+
         this.logger.log(`Промт оптимизирован: ${optimizedPrompt}`);
         return optimizedPrompt;
       } else {
@@ -414,12 +369,7 @@ export class OpenAiService {
    * fileBuffer - содержимое файла
    * filename - имя файла (нужно для корректной передачи в API)
    */
-  async chatWithFile(
-    content: string,
-    userId: number,
-    fileBuffer: Buffer,
-    filename: string,
-  ): Promise<OpenAiAnswer> {
+  async chatWithFile(content: string, userId: number, fileBuffer: Buffer, filename: string): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -437,9 +387,7 @@ export class OpenAiService {
       }
 
       const runs = await this.openAi.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(
-        (run) => run.status === 'in_progress' || run.status === 'queued',
-      );
+      const activeRun = runs.data.find((run) => run.status === 'in_progress' || run.status === 'queued');
 
       if (activeRun) {
         await this.waitForRunCompletion(threadId, activeRun.id);
@@ -463,16 +411,11 @@ export class OpenAiService {
         ],
       });
 
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: assistantId,
-        },
-      );
+      const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+        assistant_id: assistantId,
+      });
       if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
-        );
+        const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
         const assistantMessage = messages.data[0];
         return await this.buildAnswer(assistantMessage);
       }

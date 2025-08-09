@@ -28,7 +28,7 @@ export class VideoService {
     this.klingAccessKey = this.configService.get<string>('KLING_ACCESS_KEY');
     this.klingSecretKey = this.configService.get<string>('KLING_SECRET_KEY');
     this.klingApiUrl = this.configService.get<string>('KLING_API_URL') || 'https://api.klingai.com';
-    
+
     if (!this.klingAccessKey || !this.klingSecretKey) {
       this.logger.error('KLING_ACCESS_KEY или KLING_SECRET_KEY не заданы в переменных окружения');
     }
@@ -48,9 +48,9 @@ export class VideoService {
         typ: 'JWT',
       };
 
-      return jwt.sign(payload, this.klingSecretKey, { 
+      return jwt.sign(payload, this.klingSecretKey, {
         algorithm: 'HS256',
-        header: header 
+        header: header,
       });
     } catch (error) {
       this.logger.error('Ошибка при генерации JWT токена', error);
@@ -98,7 +98,7 @@ export class VideoService {
       this.logger.debug(`Тело запроса: ${JSON.stringify(requestBody)}`);
 
       const headers = {
-        'Authorization': `Bearer ${jwtToken}`,
+        Authorization: `Bearer ${jwtToken}`,
         'Content-Type': 'application/json',
       };
       this.logger.debug(`Заголовки запроса: ${JSON.stringify(headers)}`);
@@ -124,23 +124,23 @@ export class VideoService {
       this.logger.debug(`Получен ответ от API: ${JSON.stringify(data)}`);
       this.logger.debug(`Тип данных: ${typeof data}`);
       this.logger.debug(`Ключи в ответе: ${Object.keys(data || {}).join(', ')}`);
-      
+
       // Проверяем различные возможные структуры ответа
       const status = data?.status || data?.data?.status || data?.data?.task_status || data?.result?.status;
       const videoUrl = data?.video_url || data?.url || data?.data?.video_url || data?.data?.url;
       const taskId = data?.id || data?.task_id || data?.data?.id || data?.data?.task_id;
-      
+
       this.logger.debug(`Извлеченный статус: ${status}`);
       this.logger.debug(`Извлеченный URL видео: ${videoUrl}`);
       this.logger.debug(`Извлеченный ID задачи: ${taskId}`);
-      
-             if (status === 'succeed' && videoUrl) {
-         this.logger.log('Видео успешно сгенерировано');
-         return {
-           success: true,
-           videoUrl: videoUrl,
-         };
-       } else if (status === 'processing' || status === 'submitted') {
+
+      if (status === 'succeed' && videoUrl) {
+        this.logger.log('Видео успешно сгенерировано');
+        return {
+          success: true,
+          videoUrl: videoUrl,
+        };
+      } else if (status === 'processing' || status === 'submitted') {
         // Если видео еще обрабатывается, ждем и проверяем статус
         if (!taskId) {
           this.logger.error('Отсутствует ID задачи для отслеживания статуса');
@@ -179,31 +179,31 @@ export class VideoService {
 
     while (attempts < maxAttempts) {
       try {
-        await new Promise(resolve => setTimeout(resolve, 10000)); // ждем 10 секунд
+        await new Promise((resolve) => setTimeout(resolve, 10000)); // ждем 10 секунд
 
         // Генерируем новый JWT токен для каждого запроса
         const jwtToken = this.generateJWTToken();
-        
+
         const statusUrl = `${this.klingApiUrl}/v1/videos/text2video/${videoId}`;
         this.logger.debug(`Проверяю статус по URL: ${statusUrl}`);
-        
+
         const response = await fetch(statusUrl, {
           headers: {
-            'Authorization': `Bearer ${jwtToken}`,
+            Authorization: `Bearer ${jwtToken}`,
           },
         });
 
         if (!response.ok) {
           const errorText = await response.text();
           this.logger.error(`Ошибка при проверке статуса видео: ${response.status} - ${errorText}`);
-          
+
           // Если это временная ошибка (400, 500), продолжаем попытки
           if (response.status >= 400 && response.status < 600) {
             this.logger.warn(`Временная ошибка API (${response.status}), продолжаю попытки...`);
             attempts++;
             continue;
           }
-          
+
           return {
             success: false,
             error: 'Ошибка при проверке статуса видео',
@@ -239,12 +239,10 @@ export class VideoService {
 
         attempts++;
         this.logger.debug(`Попытка ${attempts}/${maxAttempts}: статус видео - ${status}`);
-        
+
         // Вызываем callback для обновления прогресса
         if (options?.onProgress) {
-          const elapsedSeconds = attempts * 10;
-          const statusText = status === 'submitted' ? 'отправлена' : 
-                           status === 'processing' ? 'обрабатывается' : status;
+          const statusText = status === 'submitted' ? 'отправлена' : status === 'processing' ? 'обрабатывается' : status;
           options.onProgress(statusText, attempts, maxAttempts);
         }
       } catch (error) {
@@ -271,7 +269,7 @@ export class VideoService {
   async downloadVideo(videoUrl: string): Promise<Buffer | null> {
     try {
       this.logger.log(`Скачиваю видео: ${videoUrl}`);
-      
+
       const response = await fetch(videoUrl);
       if (!response.ok) {
         this.logger.error(`Ошибка при скачивании видео: ${response.status}`);
@@ -280,11 +278,11 @@ export class VideoService {
 
       const buffer = Buffer.from(await response.arrayBuffer());
       this.logger.log(`Видео успешно скачано, размер: ${buffer.length} байт`);
-      
+
       return buffer;
     } catch (error) {
       this.logger.error('Ошибка при скачивании видео', error);
       return null;
     }
   }
-} 
+}
