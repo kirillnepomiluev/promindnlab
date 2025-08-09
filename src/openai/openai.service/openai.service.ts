@@ -222,7 +222,7 @@ export class OpenAiService {
       const { data } = await this.openAi.images.generate({
         model: 'gpt-image-1',
         prompt,
-        quality: 'low',
+        quality: 'high',
         n: 1,
         size: '1024x1024',
       });
@@ -265,7 +265,7 @@ export class OpenAiService {
         image: file,
         prompt,
         model: 'gpt-image-1',
-        quality: 'low',
+        quality: 'high',
         n: 1,
         size: '1024x1024',
       });
