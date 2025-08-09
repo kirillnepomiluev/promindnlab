@@ -553,6 +553,46 @@ export class TelegramService {
           } else {
             await ctx.reply('Не удалось сгенерировать изображение');
           }
+        } else if (caption.startsWith('/video')) {
+          if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
+          const prompt = caption.replace('/video', '').trim();
+          if (!prompt) {
+            await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+            return;
+          }
+          
+          // Отправляем сообщение об оптимизации запроса
+          const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
+          
+          // Генерируем видео по изображению (внутри будет оптимизация промта)
+          const videoResult = await this.video.generateVideoFromImage(buffer, prompt, {
+            onProgress: (status, attempt, maxAttempts) => {
+              // Обновляем сообщение на "СОЗДАЮ ВИДЕО" когда начинается генерация
+              if (attempt === 0) {
+                this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
+              } else {
+                this.updateVideoProgress(ctx, optimizeMsg.message_id, status, attempt, maxAttempts);
+              }
+            }
+          });
+          
+          // Удаляем сообщение с прогрессом
+          try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
+          } catch (error) {
+            this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
+          }
+          
+          if (videoResult.success && videoResult.videoUrl) {
+            const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
+            if (videoBuffer) {
+              await this.sendVideo(ctx, videoBuffer, `Видео по изображению: "${prompt}"`);
+            } else {
+              await ctx.reply('Не удалось скачать сгенерированное видео');
+            }
+          } else {
+            await ctx.reply(`Не удалось сгенерировать видео: ${videoResult.error}`);
+          }
         } else {
           if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
