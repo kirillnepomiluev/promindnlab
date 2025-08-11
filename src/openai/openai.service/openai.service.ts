@@ -30,6 +30,9 @@ export class OpenAiService {
   private readonly openAi: OpenAI;
   private readonly logger = new Logger(OpenAiService.name);
   private threadMap: Map<number, string> = new Map();
+  
+  // Система блокировки тредов - Map для отслеживания активных запросов по threadId
+  private activeThreads: Map<string, Promise<any>> = new Map();
 
   /**
    * Подготавливает изображение для отправки в OpenAI: конвертирует в PNG,
@@ -94,6 +97,48 @@ export class OpenAiService {
       baseURL,
     });
   }
+
+  /**
+   * Проверяет, активен ли тред (выполняется ли в нем запрос)
+   */
+  private isThreadActive(threadId: string): boolean {
+    return this.activeThreads.has(threadId);
+  }
+
+  /**
+   * Блокирует тред для выполнения запроса
+   */
+  private async lockThread<T>(threadId: string, operation: () => Promise<T>): Promise<T> {
+    if (this.isThreadActive(threadId)) {
+      throw new Error('Тред уже занят другим запросом. Пожалуйста, дождитесь завершения предыдущего запроса.');
+    }
+
+    const promise = operation();
+    this.activeThreads.set(threadId, promise);
+    
+    try {
+      const result = await promise;
+      return result;
+    } finally {
+      this.activeThreads.delete(threadId);
+    }
+  }
+
+  /**
+   * Проверяет активные runs в треде и ждет их завершения
+   */
+  private async checkAndWaitForActiveRuns(threadId: string): Promise<void> {
+    const runs = await this.openAi.beta.threads.runs.list(threadId);
+    const activeRun = runs.data.find(
+      (run) => run.status === 'in_progress' || run.status === 'queued'
+    );
+
+    if (activeRun) {
+      this.logger.log(`Активный run уже выполняется для thread ${threadId}. Ждем завершения...`);
+      await this.waitForRunCompletion(threadId, activeRun.id);
+    }
+  }
+
   async waitForRunCompletion(threadId: string, runId: string) {
     let runStatus = 'in_progress';
 
@@ -160,11 +205,11 @@ export class OpenAiService {
     }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
+    
     try {
       if (!threadId) {
         // Создаем новый тред, если не существует
         thread = await this.openAi.beta.threads.create();
-
         threadId = thread.id;
         this.threadMap.set(userId, threadId);
         await this.sessionService.setSessionId(userId, threadId);
@@ -172,49 +217,53 @@ export class OpenAiService {
         // Если тред уже есть, просто получаем его ID
         thread = { id: threadId };
       }
-      // === Проверяем, есть ли активный run ===
-      const runs = await this.openAi.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(
-        (run) => run.status === 'in_progress' || run.status === 'queued',
-      );
 
-      if (activeRun) {
-        console.log(
-          `Активный run уже выполняется для thread ${threadId}. Ждем завершения...`,
+      // Используем систему блокировки тредов
+      return await this.lockThread(threadId, async () => {
+        // Проверяем активные runs в треде
+        await this.checkAndWaitForActiveRuns(threadId);
+
+        // Добавляем сообщение пользователя в тред
+        await this.openAi.beta.threads.messages.create(thread.id, {
+          role: 'user',
+          content: content,
+        });
+
+        // Генерируем ответ ассистента по треду
+        const response = await this.openAi.beta.threads.runs.createAndPoll(
+          thread.id,
+          {
+            assistant_id: assistantId,
+          },
         );
-        await this.waitForRunCompletion(threadId, activeRun.id);
-      }
-
-      // Добавляем сообщение пользователя в тред
-      await this.openAi.beta.threads.messages.create(thread.id, {
-        role: 'user',
-        content: content,
+        
+        if (response.status === 'completed') {
+          const messages = await this.openAi.beta.threads.messages.list(
+            response.thread_id,
+          );
+          const assistantMessage = messages.data[0];
+          return await this.buildAnswer(assistantMessage);
+        } else {
+          this.logger.warn(`Run завершился со статусом: ${response.status}`);
+          throw new Error(`Run завершился со статусом: ${response.status}`);
+        }
       });
-
-      // Генерируем ответ ассистента по треду
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: assistantId,
-        },
-      );
-      if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
-        );
-        const assistantMessage = messages.data[0];
-        return await this.buildAnswer(assistantMessage);
-      } else {
-        console.log(response.status);
-      }
     } catch (error) {
-      console.error(error);
-      console.log(error);
+      this.logger.error('Ошибка в чате с ассистентом', error);
+      
+      // Если это ошибка блокировки треда, возвращаем специальное сообщение
+      if (error instanceof Error && error.message.includes('Тред уже занят')) {
+        return {
+          text: '⏳ Тред уже занят другим запросом. Пожалуйста, дождитесь завершения предыдущего запроса.',
+          files: [],
+        };
+      }
+      
+      return {
+        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        files: [],
+      };
     }
-    return {
-      text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
-      files: [],
-    };
   }
 
   async generateImage(prompt: string): Promise<string | Buffer | null> {
@@ -302,6 +351,7 @@ export class OpenAiService {
     }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
+    
     try {
       if (!threadId) {
         thread = await this.openAi.beta.threads.create();
@@ -312,50 +362,56 @@ export class OpenAiService {
         thread = { id: threadId };
       }
 
-      const runs = await this.openAi.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(
-        (run) => run.status === 'in_progress' || run.status === 'queued',
-      );
+      // Используем систему блокировки тредов
+      return await this.lockThread(threadId, async () => {
+        // Проверяем активные runs в треде
+        await this.checkAndWaitForActiveRuns(threadId);
 
-      if (activeRun) {
-        await this.waitForRunCompletion(threadId, activeRun.id);
-      }
+        // загружаем файл для ассистента
+        const prepared = await this.prepareImage(image);
+        const fileObj = await toFile(prepared, 'image.png', { type: 'image/png' });
+        const file = await this.openAi.files.create({
+          file: fileObj,
+          purpose: 'assistants',
+        });
 
-      // загружаем файл для ассистента
-      const prepared = await this.prepareImage(image);
-      const fileObj = await toFile(prepared, 'image.png', { type: 'image/png' });
-      const file = await this.openAi.files.create({
-        file: fileObj,
-        purpose: 'assistants',
-      });
+        await this.openAi.beta.threads.messages.create(thread.id, {
+          role: 'user',
+          content: [
+            { type: 'text', text: content },
+            { type: 'image_file', image_file: { file_id: file.id } },
+          ],
+        });
 
-      await this.openAi.beta.threads.messages.create(thread.id, {
-        role: 'user',
-        content: [
-          { type: 'text', text: content },
-          { type: 'image_file', image_file: { file_id: file.id } },
-        ],
-      });
-
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: assistantId,
-        },
-      );
-      if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
+        const response = await this.openAi.beta.threads.runs.createAndPoll(
+          thread.id,
+          {
+            assistant_id: assistantId,
+          },
         );
-        const assistantMessage = messages.data[0];
-        return await this.buildAnswer(assistantMessage);
-      }
-      return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
-        files: [],
-      };
+        
+        if (response.status === 'completed') {
+          const messages = await this.openAi.beta.threads.messages.list(
+            response.thread_id,
+          );
+          const assistantMessage = messages.data[0];
+          return await this.buildAnswer(assistantMessage);
+        } else {
+          this.logger.warn(`Run завершился со статусом: ${response.status}`);
+          throw new Error(`Run завершился со статусом: ${response.status}`);
+        }
+      });
     } catch (error) {
       this.logger.error('Ошибка при отправке сообщения с картинкой', error);
+      
+      // Если это ошибка блокировки треда, возвращаем специальное сообщение
+      if (error instanceof Error && error.message.includes('Тред уже занят')) {
+        return {
+          text: '⏳ Тред уже занят другим запросом. Пожалуйста, дождитесь завершения предыдущего запроса.',
+          files: [],
+        };
+      }
+      
       return {
         text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
         files: [],
@@ -426,6 +482,7 @@ export class OpenAiService {
     }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
+    
     try {
       if (!threadId) {
         thread = await this.openAi.beta.threads.create();
@@ -436,56 +493,79 @@ export class OpenAiService {
         thread = { id: threadId };
       }
 
-      const runs = await this.openAi.beta.threads.runs.list(threadId);
-      const activeRun = runs.data.find(
-        (run) => run.status === 'in_progress' || run.status === 'queued',
-      );
+      // Используем систему блокировки тредов
+      return await this.lockThread(threadId, async () => {
+        // Проверяем активные runs в треде
+        await this.checkAndWaitForActiveRuns(threadId);
 
-      if (activeRun) {
-        await this.waitForRunCompletion(threadId, activeRun.id);
-      }
+        // загружаем файл для ассистента
+        const fileObj = await toFile(fileBuffer, filename);
+        const file = await this.openAi.files.create({
+          file: fileObj,
+          purpose: 'assistants',
+        });
 
-      // загружаем файл для ассистента
-      const fileObj = await toFile(fileBuffer, filename);
-      const file = await this.openAi.files.create({
-        file: fileObj,
-        purpose: 'assistants',
-      });
+        await this.openAi.beta.threads.messages.create(thread.id, {
+          role: 'user',
+          content,
+          attachments: [
+            {
+              file_id: file.id,
+              tools: [{ type: 'file_search' }],
+            },
+          ],
+        });
 
-      await this.openAi.beta.threads.messages.create(thread.id, {
-        role: 'user',
-        content,
-        attachments: [
+        const response = await this.openAi.beta.threads.runs.createAndPoll(
+          thread.id,
           {
-            file_id: file.id,
-            tools: [{ type: 'file_search' }],
+            assistant_id: assistantId,
           },
-        ],
-      });
-
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: assistantId,
-        },
-      );
-      if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
         );
-        const assistantMessage = messages.data[0];
-        return await this.buildAnswer(assistantMessage);
-      }
-      return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
-        files: [],
-      };
+        
+        if (response.status === 'completed') {
+          const messages = await this.openAi.beta.threads.messages.list(
+            response.thread_id,
+          );
+          const assistantMessage = messages.data[0];
+          return await this.buildAnswer(assistantMessage);
+        } else {
+          this.logger.warn(`Run завершился со статусом: ${response.status}`);
+          throw new Error(`Run завершился со статусом: ${response.status}`);
+        }
+      });
     } catch (error) {
       this.logger.error('Ошибка при отправке сообщения с файлом', error);
+      
+      // Если это ошибка блокировки треда, возвращаем специальное сообщение
+      if (error instanceof Error && error.message.includes('Тред уже занят')) {
+        return {
+          text: '⏳ Тред уже занят другим запросом. Пожалуйста, дождитесь завершения предыдущего запроса.',
+          files: [],
+        };
+      }
+      
       return {
         text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
         files: [],
       };
     }
+  }
+
+  /**
+   * Получает информацию о статусе активных тредов (для отладки)
+   */
+  getActiveThreadsStatus(): { threadId: string; isActive: boolean }[] {
+    const status: { threadId: string; isActive: boolean }[] = [];
+    
+    // Добавляем информацию о треде из threadMap
+    for (const [userId, threadId] of this.threadMap.entries()) {
+      status.push({
+        threadId: `${threadId} (user: ${userId})`,
+        isActive: this.isThreadActive(threadId)
+      });
+    }
+    
+    return status;
   }
 }
