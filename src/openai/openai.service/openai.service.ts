@@ -274,6 +274,7 @@ export class OpenAiService {
         quality: 'high',
         n: 1,
         size: '1024x1024',
+        moderation: 'low',
       });
       if (!data || data.length === 0) {
         this.logger.error('Image.generate вернул пустой data', data);

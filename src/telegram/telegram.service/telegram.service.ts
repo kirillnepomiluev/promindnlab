@@ -25,7 +25,7 @@ export class TelegramService {
   private readonly welcomeMessage = 'Привет! Я Нейролабик — твой умный и весёлый помощник. Рад знакомству и всегда готов помочь!';
   // Стоимость операций в токенах
   private readonly COST_TEXT = 1;
-  private readonly COST_IMAGE = 10;
+  private readonly COST_IMAGE = 60;
   private readonly COST_VIDEO = 200; // стоимость генерации видео
   private readonly COST_VOICE_RECOGNITION = 1;
   private readonly COST_VOICE_REPLY_EXTRA = 3; // после распознавания
@@ -132,6 +132,73 @@ export class TelegramService {
       await ctx.telegram.editMessageCaption(ctx.chat.id, messageId, undefined, progressText);
     } catch (error) {
       this.logger.error('Ошибка при обновлении прогресса видео', error);
+    }
+  }
+
+  // Обновление прогресса генерации изображения
+  private async updateImageProgress(ctx: Context, messageId: number, attempt: number, maxAttempts: number) {
+    try {
+      const elapsedSeconds = attempt * 10;
+      const progressText = `РИСУЮ ---- ${elapsedSeconds}с ---- ${attempt}/${maxAttempts}`;
+      await ctx.telegram.editMessageCaption(ctx.chat.id, messageId, undefined, progressText);
+    } catch (error) {
+      this.logger.error('Ошибка при обновлении прогресса изображения', error);
+    }
+  }
+
+  // Генерация изображения с обновлением прогресса
+  private async generateImageWithProgress(ctx: Context, prompt: string, progressMsg: any): Promise<string | Buffer | null> {
+    const maxAttempts = 6; // максимум 1 минута ожидания (6 * 10 секунд)
+    let attempts = 0;
+
+    // Запускаем обновление прогресса каждые 10 секунд
+    const progressInterval = setInterval(async () => {
+      attempts++;
+      if (attempts <= maxAttempts) {
+        await this.updateImageProgress(ctx, progressMsg.message_id, attempts, maxAttempts);
+      }
+    }, 10000);
+
+    try {
+      // Генерируем изображение
+      const image = await this.openai.generateImage(prompt);
+      
+      // Останавливаем обновление прогресса
+      clearInterval(progressInterval);
+      
+      return image;
+    } catch (error) {
+      // Останавливаем обновление прогресса в случае ошибки
+      clearInterval(progressInterval);
+      throw error;
+    }
+  }
+
+  // Генерация изображения на основе фото с обновлением прогресса
+  private async generateImageFromPhotoWithProgress(ctx: Context, imageBuffer: Buffer, prompt: string, progressMsg: any): Promise<string | Buffer | null> {
+    const maxAttempts = 6; // максимум 1 минута ожидания (6 * 10 секунд)
+    let attempts = 0;
+
+    // Запускаем обновление прогресса каждые 10 секунд
+    const progressInterval = setInterval(async () => {
+      attempts++;
+      if (attempts <= maxAttempts) {
+        await this.updateImageProgress(ctx, progressMsg.message_id, attempts, maxAttempts);
+      }
+    }, 10000);
+
+    try {
+      // Генерируем изображение на основе фото
+      const image = await this.openai.generateImageFromPhoto(imageBuffer, prompt);
+      
+      // Останавливаем обновление прогресса
+      clearInterval(progressInterval);
+      
+      return image;
+    } catch (error) {
+      // Останавливаем обновление прогресса в случае ошибки
+      clearInterval(progressInterval);
+      throw error;
     }
   }
 
@@ -311,6 +378,14 @@ export class TelegramService {
             }
           }
         });
+        
+        // Удаляем сообщение с прогрессом
+        try {
+          await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
+        } catch (error) {
+          this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
+        }
+        
         if (videoResult.success && videoResult.videoUrl) {
           const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
           if (videoBuffer) {
@@ -325,7 +400,7 @@ export class TelegramService {
         if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
         const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
         const prompt = answer.text.replace('/imagine', '').trim();
-        const image = await this.openai.generateImage(prompt);
+        const image = await this.generateImageWithProgress(ctx, prompt, drawMsg);
         await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
         if (image) {
           await this.sendPhoto(ctx, image);
@@ -397,6 +472,14 @@ export class TelegramService {
               }
             }
           });
+          
+          // Удаляем сообщение с прогрессом
+          try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
+          } catch (error) {
+            this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
+          }
+          
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -411,7 +494,7 @@ export class TelegramService {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = q.replace('/image', '').trim();
-          const image = await this.openai.generateImage(prompt);
+          const image = await this.generateImageWithProgress(ctx, prompt, placeholder);
           await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
@@ -463,6 +546,14 @@ export class TelegramService {
               }
             }
           });
+          
+          // Удаляем сообщение с прогрессом
+          try {
+            await ctx.telegram.deleteMessage(ctx.chat.id, optimizeMsg.message_id);
+          } catch (error) {
+            this.logger.warn('Не удалось удалить сообщение с прогрессом', error);
+          }
+          
           if (videoResult.success && videoResult.videoUrl) {
             const videoBuffer = await this.video.downloadVideo(videoResult.videoUrl);
             if (videoBuffer) {
@@ -476,7 +567,7 @@ export class TelegramService {
         } else if (cleaned.startsWith('нарисуй') || cleaned.startsWith('imagine')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
-          const image = await this.openai.generateImage(text);
+          const image = await this.generateImageWithProgress(ctx, text, placeholder);
           await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
@@ -528,7 +619,7 @@ export class TelegramService {
               if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
               const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
               const prompt = answer.text.replace('/imagine', '').trim();
-              const image = await this.openai.generateImage(prompt);
+              const image = await this.generateImageWithProgress(ctx, prompt, drawMsg);
               await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
               if (image) {
                 await this.sendPhoto(ctx, image);
@@ -593,7 +684,7 @@ export class TelegramService {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = caption.replace('/image', '').trim();
-          const image = await this.openai.generateImageFromPhoto(buffer, prompt);
+          const image = await this.generateImageFromPhotoWithProgress(ctx, buffer, prompt, drawMsg);
           await ctx.telegram.deleteMessage(ctx.chat.id, drawMsg.message_id);
           if (image) {
             await this.sendPhoto(ctx, image);
@@ -704,12 +795,12 @@ export class TelegramService {
         if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
         const prompt = ctx.message.text.replace('/img', '').trim();
         const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
-        const image = await this.openai.generateImage(prompt);
+        const image = await this.generateImageWithProgress(ctx, prompt, placeholder);
         await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
         if (image) {
           await this.sendPhoto(ctx, image);
         } else {
-          await ctx.reply('Не удалось сгенерировать изображение');
+          await ctx.reply('Не удалось сгенерировать изображения');
         }
       } catch (err) {
         this.logger.error('Ошибка команды img', err);

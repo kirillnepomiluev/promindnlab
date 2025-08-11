@@ -98,8 +98,8 @@ export class VideoService {
       this.logger.debug(`JWT токен сгенерирован для запроса`);
 
       const requestBody = {
-        model_name: 'kling-v1',
-        mode: 'pro',
+        model_name: 'kling-v1-6',
+        mode: 'std',
         duration: '5',
         image: imageBase64,
         prompt: optimizedPrompt,
