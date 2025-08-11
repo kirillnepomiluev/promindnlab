@@ -202,6 +202,26 @@ export class TelegramService {
     }
   }
 
+  // Загрузка файла с повторными попытками на случай временных ошибок Telegram
+  private async downloadFileWithRetry(url: string, attempts = 3, delayMs = 1000): Promise<Buffer> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          throw new Error(`TG download error: ${res.status} ${res.statusText}`);
+        }
+        return Buffer.from(await res.arrayBuffer());
+      } catch (error) {
+        this.logger.warn(`Не удалось скачать файл (попытка ${attempt})`, error as Error);
+        if (attempt === attempts) {
+          throw error;
+        }
+        await new Promise((resolve) => setTimeout(resolve, delayMs));
+      }
+    }
+    throw new Error('Не удалось скачать файл');
+  }
+
   // Получить ФИО пользователя из основной базы для отображения
   private getFullName(user: MainUser): string {
     const parts = [] as string[];
@@ -676,9 +696,8 @@ export class TelegramService {
         const photos = ctx.message.photo;
         const best = photos[photos.length - 1];
         const link = await ctx.telegram.getFileLink(best.file_id);
-        const res = await fetch(link.href);
-        if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
-        const buffer = Buffer.from(await res.arrayBuffer());
+        // скачиваем изображение с повторными попытками, чтобы избежать ошибок 502
+        const buffer = await this.downloadFileWithRetry(link.href);
 
         if (caption.startsWith('/image')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
@@ -760,9 +779,8 @@ export class TelegramService {
 
         const doc = ctx.message.document;
         const link = await ctx.telegram.getFileLink(doc.file_id);
-        const res = await fetch(link.href);
-        if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
-        const buffer = Buffer.from(await res.arrayBuffer());
+        // скачиваем документ с повторными попытками, чтобы избежать ошибок сети
+        const buffer = await this.downloadFileWithRetry(link.href);
 
         if (!(await this.chargeTokens(ctx, user, this.COST_FILE))) return;
 
