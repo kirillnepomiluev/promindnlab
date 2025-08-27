@@ -646,16 +646,20 @@ export class OpenAiService {
             file: fileObj,
             purpose: 'assistants',
           });
-
+          const vectorStore = await client.vectorStores.create({
+            name: `for tread ${thread.id}`,
+            file_ids: [file.id],
+          });
+          await client.beta.threads.update(thread.id, {
+            tool_resources: {
+              file_search: {
+                vector_store_ids: [vectorStore.id],
+              },
+            },
+          });
           await client.beta.threads.messages.create(thread.id, {
             role: 'user',
             content,
-            attachments: [
-              {
-                file_id: file.id,
-                tools: [{ type: 'code_interpreter' }],
-              },
-            ],
           });
 
           const response = await client.beta.threads.runs.createAndPoll(
