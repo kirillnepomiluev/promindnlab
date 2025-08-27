@@ -39,6 +39,10 @@ export class OpenAiService {
   private isMainApiAvailable: boolean = true;
   private lastMainApiCheck: number = 0;
   private readonly API_CHECK_INTERVAL = 5 * 60 * 1000; // 5 минут
+  
+  // Таймер для очистки устаревших тредов
+  private readonly THREAD_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 минут
+  private lastThreadCleanup: number = 0;
 
   /**
    * Проверяет доступность основного API
@@ -97,6 +101,14 @@ export class OpenAiService {
           this.logger.warn(`Получена ошибка 502, переключаемся на fallback API (попытка ${attempt}/${maxRetries})`);
           this.isMainApiAvailable = false;
           continue;
+        }
+        
+        // Если это ошибка истекшего векторного хранилища, создаем новый тред
+        if (error.message?.includes('Vector store') && error.message?.includes('is expired')) {
+          this.logger.warn(`Векторное хранилище истекло, создаем новый тред (попытка ${attempt}/${maxRetries})`);
+          // Сбрасываем threadId для пользователя, чтобы создать новый тред
+          // Это будет обработано в вызывающем методе
+          throw new Error('VECTOR_STORE_EXPIRED');
         }
         
         // Для других ошибок ждем перед повторной попыткой
@@ -286,6 +298,9 @@ export class OpenAiService {
 
   // Основной текстовый чат с ассистентом
   async chat(content: string, userId: number): Promise<OpenAiAnswer> {
+    // Проверяем и очищаем устаревшие треды
+    await this.cleanupExpiredThreads();
+    
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -338,6 +353,17 @@ export class OpenAiService {
         });
       });
     } catch (error) {
+      // Если это ошибка истекшего векторного хранилища, создаем новый тред
+      if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
+        this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
+        // Удаляем старый тред из сессии и создаем новый
+        await this.sessionService.setSessionId(userId, null);
+        this.threadMap.delete(userId);
+        
+        // Рекурсивно вызываем метод с новым тредом
+        return await this.chat(content, userId);
+      }
+      
       this.logger.error('Ошибка в чате с ассистентом', error);
       
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
@@ -439,6 +465,9 @@ export class OpenAiService {
     userId: number,
     image: Buffer,
   ): Promise<OpenAiAnswer> {
+    // Проверяем и очищаем устаревшие треды
+    await this.cleanupExpiredThreads();
+    
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -498,6 +527,17 @@ export class OpenAiService {
         });
       });
     } catch (error) {
+      // Если это ошибка истекшего векторного хранилища, создаем новый тред
+      if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
+        this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
+        // Удаляем старый тред из сессии и создаем новый
+        await this.sessionService.setSessionId(userId, null);
+        this.threadMap.delete(userId);
+        
+        // Рекурсивно вызываем метод с новым тредом
+        return await this.chatWithImage(content, userId, image);
+      }
+      
       this.logger.error('Ошибка при отправке сообщения с картинкой', error);
       
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
@@ -574,6 +614,9 @@ export class OpenAiService {
     fileBuffer: Buffer,
     filename: string,
   ): Promise<OpenAiAnswer> {
+    // Проверяем и очищаем устаревшие треды
+    await this.cleanupExpiredThreads();
+    
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -635,6 +678,17 @@ export class OpenAiService {
         });
       });
     } catch (error) {
+      // Если это ошибка истекшего векторного хранилища, создаем новый тред
+      if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
+        this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
+        // Удаляем старый тред из сессии и создаем новый
+        await this.sessionService.setSessionId(userId, null);
+        this.threadMap.delete(userId);
+        
+        // Рекурсивно вызываем метод с новым тредом
+        return await this.chatWithFile(content, userId, fileBuffer, filename);
+      }
+      
       this.logger.error('Ошибка при отправке сообщения с файлом', error);
       
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
@@ -686,5 +740,65 @@ export class OpenAiService {
   async forceCheckMainApi(): Promise<boolean> {
     this.lastMainApiCheck = 0; // Сбрасываем таймер
     return await this.checkMainApiAvailability();
+  }
+
+  /**
+   * Принудительно обновляет тред пользователя (создает новый)
+   * Полезно при проблемах с векторными хранилищами или других ошибках треда
+   */
+  async forceRefreshThread(userId: number): Promise<void> {
+    this.logger.log(`Принудительно обновляю тред для пользователя ${userId}`);
+    
+    // Удаляем старый тред из сессии
+    await this.sessionService.setSessionId(userId, null);
+    
+    // Удаляем из локального кэша
+    this.threadMap.delete(userId);
+    
+    this.logger.log(`Тред для пользователя ${userId} успешно обновлен`);
+  }
+
+  /**
+   * Проверяет валидность треда и очищает устаревшие
+   */
+  private async cleanupExpiredThreads(): Promise<void> {
+    const now = Date.now();
+    
+    // Проверяем не чаще чем раз в 30 минут
+    if (now - this.lastThreadCleanup < this.THREAD_CLEANUP_INTERVAL) {
+      return;
+    }
+    
+    this.lastThreadCleanup = now;
+    this.logger.log('Начинаю очистку устаревших тредов...');
+    
+    const client = await this.getActiveOpenAiClient();
+    const threadsToRemove: number[] = [];
+    
+    for (const [userId, threadId] of this.threadMap.entries()) {
+      try {
+        // Проверяем существование треда
+        await client.beta.threads.retrieve(threadId);
+      } catch (error: any) {
+        // Если тред не существует или истек, помечаем для удаления
+        if (error.message?.includes('Vector store') && error.message?.includes('is expired') ||
+            error.message?.includes('not found') ||
+            error.status === 404) {
+          this.logger.warn(`Тред ${threadId} для пользователя ${userId} истек или не найден, помечаю для удаления`);
+          threadsToRemove.push(userId);
+        }
+      }
+    }
+    
+    // Удаляем невалидные треды
+    for (const userId of threadsToRemove) {
+      await this.sessionService.setSessionId(userId, null);
+      this.threadMap.delete(userId);
+      this.logger.log(`Тред для пользователя ${userId} удален`);
+    }
+    
+    if (threadsToRemove.length > 0) {
+      this.logger.log(`Очистка завершена, удалено ${threadsToRemove.length} устаревших тредов`);
+    }
   }
 }
