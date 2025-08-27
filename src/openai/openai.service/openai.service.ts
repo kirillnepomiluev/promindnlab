@@ -56,11 +56,11 @@ export class OpenAiService {
       // Простой тест API - получаем список моделей
       await this.openAi.models.list();
       this.isMainApiAvailable = true;
-      this.logger.log('Основной OpenAI API доступен');
+      this.logger.log('Основной сервера API доступен');
       return true;
     } catch (error) {
       this.isMainApiAvailable = false;
-      this.logger.warn('Основной OpenAI API недоступен, используем fallback', error);
+      this.logger.warn('Основной сервера API недоступен, используем fallback', error);
       return false;
     }
   }
@@ -349,7 +349,7 @@ export class OpenAiService {
       }
       
       return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        text: '🤖 Не удалось получить ответ от сервера. Попробуйте позже',
         files: [],
       };
     }
@@ -509,7 +509,7 @@ export class OpenAiService {
       }
       
       return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        text: '🤖 Не удалось получить ответ от сервера ИИ. Попробуйте позже',
         files: [],
       };
     }
@@ -610,7 +610,7 @@ export class OpenAiService {
             attachments: [
               {
                 file_id: file.id,
-                tools: [{ type: 'file_search' }],
+                tools: [{ type: 'code_interpreter' }],
               },
             ],
           });
@@ -646,7 +646,7 @@ export class OpenAiService {
       }
       
       return {
-        text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
+        text: '🤖 Не удалось получить ответ от сервера. Попробуйте позже',
         files: [],
       };
     }
