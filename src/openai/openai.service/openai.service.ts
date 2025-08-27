@@ -44,6 +44,40 @@ export class OpenAiService {
   private readonly THREAD_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 минут
   private lastThreadCleanup: number = 0;
 
+  // Поддерживаемые OpenAI API расширения файлов
+  private readonly SUPPORTED_EXTENSIONS = [
+    'c',
+    'cpp',
+    'css',
+    'csv',
+    'doc',
+    'docx',
+    'gif',
+    'go',
+    'html',
+    'java',
+    'jpeg',
+    'jpg',
+    'js',
+    'json',
+    'md',
+    'pdf',
+    'php',
+    'pkl',
+    'png',
+    'pptx',
+    'py',
+    'rb',
+    'tar',
+    'tex',
+    'ts',
+    'txt',
+    'webp',
+    'xlsx',
+    'xml',
+    'zip',
+  ];
+
   /**
    * Проверяет доступность основного API
    */
@@ -603,10 +637,49 @@ export class OpenAiService {
   }
 
   /**
-   * Отправляет файл вместе с текстом в ассистента
-   * content - текстовое сообщение пользователя
-   * fileBuffer - содержимое файла
-   * filename - имя файла (нужно для корректной передачи в API)
+   * Нормализует имя файла, приводя расширение к нижнему регистру
+   * для совместимости с OpenAI API
+   * 
+   * Примеры:
+   * - "document.DOCX" -> "document.docx"
+   * - "image.JPG" -> "image.jpg"
+   * - "file.PDF" -> "file.pdf"
+   * - "text.txt" -> "text.txt" (не изменяется)
+   * - "noextension" -> "noextension" (не изменяется)
+   */
+  private normalizeFilename(filename: string): string {
+    if (!filename || !filename.includes('.')) {
+      return filename;
+    }
+    
+    const lastDotIndex = filename.lastIndexOf('.');
+    const name = filename.substring(0, lastDotIndex);
+    const extension = filename.substring(lastDotIndex + 1).toLowerCase();
+    
+    const normalizedFilename = `${name}.${extension}`;
+    
+    // Проверяем, поддерживается ли расширение
+    if (!this.SUPPORTED_EXTENSIONS.includes(extension)) {
+      this.logger.warn(
+        `Неподдерживаемое расширение файла: "${extension}" для файла "${filename}". ` +
+        `Поддерживаемые форматы: ${this.SUPPORTED_EXTENSIONS.join(', ')}`
+      );
+    }
+    
+    // Логируем изменение имени файла, если оно изменилось
+    if (normalizedFilename !== filename) {
+      this.logger.log(`Нормализовано имя файла: "${filename}" -> "${normalizedFilename}"`);
+    }
+    
+    return normalizedFilename;
+  }
+
+  /**
+   * Чат с файлом через OpenAI API
+   * 
+   * ИСПРАВЛЕНО: Автоматическая нормализация имен файлов для решения проблемы
+   * с расширениями в верхнем регистре (например, .DOCX -> .docx)
+   * OpenAI API чувствителен к регистру расширений файлов
    */
   async chatWithFile(
     content: string,
@@ -614,6 +687,9 @@ export class OpenAiService {
     fileBuffer: Buffer,
     filename: string,
   ): Promise<OpenAiAnswer> {
+    // Нормализуем имя файла
+    const normalizedFilename = this.normalizeFilename(filename);
+    
     // Проверяем и очищаем устаревшие треды
     await this.cleanupExpiredThreads();
     
@@ -641,7 +717,7 @@ export class OpenAiService {
 
         return await this.executeWithRetry(async (client) => {
           // загружаем файл для ассистента
-          const fileObj = await toFile(fileBuffer, filename);
+          const fileObj = await toFile(fileBuffer, normalizedFilename);
           const file = await client.files.create({
             file: fileObj,
             purpose: 'assistants',
