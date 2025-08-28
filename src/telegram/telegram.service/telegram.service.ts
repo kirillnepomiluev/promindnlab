@@ -446,11 +446,18 @@ export class TelegramService {
         if (!q) return;
 
         // пропускаем другие команды, кроме '/image', '/video', чтобы они обработались далее
-        if (q.startsWith('/') && !q.startsWith('/image') && !q.startsWith('/imagine') && !q.startsWith('/video')) {
+        if (
+          q.startsWith('/') &&
+          !q.startsWith('/image') &&
+          !q.startsWith('/и') &&
+          !q.startsWith('/imagine') &&
+          !q.startsWith('/video') &&
+          !q.startsWith('/в')
+        ) {
           return next();
         }
 
-        if (q.startsWith('/video')) {
+        if (q.startsWith('/video') || q.startsWith('/в')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
           const prompt = q.replace('/video', '').trim();
           if (!prompt) {
@@ -490,7 +497,7 @@ export class TelegramService {
           } else {
             await ctx.reply(`Не удалось сгенерировать видео: ${videoResult.error}`);
           }
-        } else if (q.startsWith('/image')) {
+        } else if (q.startsWith('/image') || q.startsWith('/и')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = q.replace('/image', '').trim();
@@ -583,7 +590,7 @@ export class TelegramService {
             // Удаляем сообщение "ДУМАЮ" только после успешного получения ответа
             await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-            if (answer.text.startsWith('/video')) {
+            if (answer.text.startsWith('/video') || answer.text.startsWith('/в')) {
               if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
               const prompt = answer.text.replace('/video', '').trim();
               if (!prompt) {
@@ -680,7 +687,7 @@ export class TelegramService {
         if (!res.ok) throw new Error(`TG download error: ${res.statusText}`);
         const buffer = Buffer.from(await res.arrayBuffer());
 
-        if (caption.startsWith('/image')) {
+        if (caption.startsWith('/image') || caption.startsWith('/и')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = caption.replace('/image', '').trim();
@@ -691,7 +698,7 @@ export class TelegramService {
           } else {
             await ctx.reply('Не удалось сгенерировать изображение');
           }
-        } else if (caption.startsWith('/video')) {
+        } else if (caption.startsWith('/video') || caption.startsWith('/в')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_VIDEO))) return;
           const prompt = caption.replace('/video', '').trim();
           if (!prompt) {
@@ -870,12 +877,12 @@ export class TelegramService {
         `Ваш баланс: <b>${profile.tokens.tokens} токенов</b>\n\n` +
         `📋 <b>Инструкция по использованию:</b>\n\n` +
         `🎨 <b>Генерация изображений:</b>\n` +
-        `• Команда: <code>/image [описание]</code>\n` +
-        `• Пример: <code>/image красивая кошка</code>\n` +
+        `• Команда: <code>/и [описание]</code>\n` +
+        `• Пример: <code>/и красивая кошка</code>\n` +
         `• Стоимость: <b>${this.COST_IMAGE} токенов</b>\n\n` +
         `🎬 <b>Генерация видео:</b>\n` +
-        `• Команда: <code>/video [описание]</code>\n` +
-        `• Пример: <code>/video кошка играет с мячиком</code>\n` +
+        `• Команда: <code>/в [описание]</code>\n` +
+        `• Пример: <code>/в кошка играет с мячиком</code>\n` +
         `• Стоимость: <b>${this.COST_VIDEO} токенов</b>\n\n` +
         `🎵 <b>Работа с аудио:</b>\n` +
         `• Распознавание речи: <b>${this.COST_VOICE_RECOGNITION} токен</b>\n` +
