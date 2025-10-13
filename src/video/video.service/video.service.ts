@@ -3,6 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { OpenAiService } from '../../openai/openai.service/openai.service';
 import fetch from 'node-fetch';
 import * as jwt from 'jsonwebtoken';
+import OpenAI from 'openai';
+import { toFile } from 'openai/uploads';
+import FormData from 'form-data';
+
+export enum VideoProvider {
+  KLING = 'kling',
+  OPENAI = 'openai',
+}
 
 export interface VideoGenerationResponse {
   success: boolean;
@@ -12,6 +20,7 @@ export interface VideoGenerationResponse {
 
 export interface VideoGenerationOptions {
   onProgress?: (status: string, attempt: number, maxAttempts: number) => void;
+  provider?: VideoProvider;
 }
 
 @Injectable()
@@ -20,19 +29,301 @@ export class VideoService {
   private readonly klingAccessKey: string;
   private readonly klingSecretKey: string;
   private readonly klingApiUrl: string;
+  private readonly openai: OpenAI;
+  private readonly defaultProvider: VideoProvider;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly openaiService: OpenAiService,
   ) {
+    // Конфигурация Kling
     this.klingAccessKey = this.configService.get<string>('KLING_ACCESS_KEY');
     this.klingSecretKey = this.configService.get<string>('KLING_SECRET_KEY');
     this.klingApiUrl = this.configService.get<string>('KLING_API_URL') || 'https://api.klingai.com';
 
     if (!this.klingAccessKey || !this.klingSecretKey) {
-      this.logger.error('KLING_ACCESS_KEY или KLING_SECRET_KEY не заданы в переменных окружения');
+      this.logger.warn('KLING_ACCESS_KEY или KLING_SECRET_KEY не заданы в переменных окружения');
+    }
+
+    // Конфигурация OpenAI для видео
+    const openaiKey = this.configService.get<string>('OPENAI_API_KEY_PRO');
+    const openaiBaseUrl = this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() || 'https://api.openai.com/v1';
+
+    if (!openaiKey) {
+      this.logger.error('OPENAI_API_KEY_PRO не задан в переменных окружения');
+    }
+
+    this.openai = new OpenAI({
+      apiKey: openaiKey?.replace(/\s+/g, '').trim(),
+      baseURL: openaiBaseUrl,
+    });
+
+    // Установка провайдера по умолчанию (OpenAI)
+    const configuredProvider = this.configService.get<string>('VIDEO_PROVIDER')?.toLowerCase();
+    this.defaultProvider = configuredProvider === 'kling' ? VideoProvider.KLING : VideoProvider.OPENAI;
+    this.logger.log(`Провайдер видео по умолчанию: ${this.defaultProvider}`);
+  }
+
+  // ==================== OpenAI Video API Methods ====================
+
+  /**
+   * Генерирует видео через OpenAI API (text-to-video)
+   * @param prompt - текстовое описание для генерации видео
+   * @param options - опции для генерации
+   * @returns Promise<VideoGenerationResponse>
+   */
+  private async generateVideoOpenAI(prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+    try {
+      this.logger.log(`Начинаю генерацию видео через OpenAI для промпта: ${prompt}`);
+
+      // Оптимизируем промт через ассистента
+      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+
+      // Создаем запрос на генерацию видео
+      const formData = new FormData();
+      formData.append('model', 'sora-2');
+      formData.append('prompt', optimizedPrompt);
+      formData.append('size', '720x1280'); // Вертикальное видео по умолчанию
+      formData.append('seconds', '4');
+
+      const response = await fetch(`${this.openai.baseURL}/videos`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.openai.apiKey}`,
+          ...formData.getHeaders(),
+        },
+        body: formData as any,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(`Ошибка OpenAI Video API: ${response.status} - ${errorText}`);
+        return {
+          success: false,
+          error: `Ошибка API: ${response.status}`,
+        };
+      }
+
+      const data = await response.json();
+      this.logger.debug(`Получен ответ от OpenAI Video API: ${JSON.stringify(data)}`);
+
+      const videoJobId = data.id;
+      if (!videoJobId) {
+        this.logger.error('Отсутствует ID задачи в ответе OpenAI');
+        return {
+          success: false,
+          error: 'Отсутствует ID задачи',
+        };
+      }
+
+      this.logger.log(`Задача создана, ID: ${videoJobId}, статус: ${data.status}`);
+      return await this.waitForVideoCompletionOpenAI(videoJobId, options);
+    } catch (error) {
+      this.logger.error('Ошибка при генерации видео через OpenAI', error);
+      return {
+        success: false,
+        error: 'Внутренняя ошибка сервера',
+      };
     }
   }
+
+  /**
+   * Генерирует видео на основе изображения через OpenAI API (image-to-video)
+   * @param imageBuffer - Buffer изображения
+   * @param prompt - текстовое описание для генерации видео
+   * @param options - опции для генерации
+   * @returns Promise<VideoGenerationResponse>
+   */
+  private async generateVideoFromImageOpenAI(
+    imageBuffer: Buffer,
+    prompt: string,
+    options?: VideoGenerationOptions,
+  ): Promise<VideoGenerationResponse> {
+    try {
+      this.logger.log(`Начинаю генерацию видео через OpenAI по изображению для промпта: ${prompt}`);
+
+      // Оптимизируем промт через ассистента
+      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+
+      // Конвертируем Buffer в File для OpenAI
+      const imageFile = await toFile(imageBuffer, 'reference.png', { type: 'image/png' });
+
+      // Создаем запрос на генерацию видео с изображением
+      const formData = new FormData();
+      formData.append('model', 'sora-2');
+      formData.append('prompt', optimizedPrompt);
+      formData.append('input_reference', imageFile as any);
+      formData.append('size', '720x1280'); // Вертикальное видео по умолчанию
+      formData.append('seconds', '4');
+
+      const response = await fetch(`${this.openai.baseURL}/videos`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.openai.apiKey}`,
+          ...formData.getHeaders(),
+        },
+        body: formData as any,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        this.logger.error(`Ошибка OpenAI Video API (image2video): ${response.status} - ${errorText}`);
+        return {
+          success: false,
+          error: `Ошибка API: ${response.status}`,
+        };
+      }
+
+      const data = await response.json();
+      this.logger.debug(`Получен ответ от OpenAI Video API (image2video): ${JSON.stringify(data)}`);
+
+      const videoJobId = data.id;
+      if (!videoJobId) {
+        this.logger.error('Отсутствует ID задачи в ответе OpenAI');
+        return {
+          success: false,
+          error: 'Отсутствует ID задачи',
+        };
+      }
+
+      this.logger.log(`Задача image2video создана, ID: ${videoJobId}, статус: ${data.status}`);
+      return await this.waitForVideoCompletionOpenAI(videoJobId, options);
+    } catch (error) {
+      this.logger.error('Ошибка при генерации видео по изображению через OpenAI', error);
+      return {
+        success: false,
+        error: 'Внутренняя ошибка сервера',
+      };
+    }
+  }
+
+  /**
+   * Ожидает завершения генерации видео в OpenAI и возвращает результат
+   * @param videoJobId - ID задачи видео в OpenAI
+   * @param options - опции для генерации
+   * @returns Promise<VideoGenerationResponse>
+   */
+  private async waitForVideoCompletionOpenAI(videoJobId: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+    const maxAttempts = 60; // максимум 10 минут ожидания (60 * 10 секунд)
+    let attempts = 0;
+
+    while (attempts < maxAttempts) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 10000)); // ждем 10 секунд
+
+        const statusUrl = `${this.openai.baseURL}/videos/${videoJobId}`;
+        this.logger.debug(`Проверяю статус OpenAI видео по URL: ${statusUrl}`);
+
+        const response = await fetch(statusUrl, {
+          headers: {
+            Authorization: `Bearer ${this.openai.apiKey}`,
+          },
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          this.logger.error(`Ошибка при проверке статуса OpenAI видео: ${response.status} - ${errorText}`);
+
+          // Если это временная ошибка, продолжаем попытки
+          if (response.status >= 400 && response.status < 600) {
+            this.logger.warn(`Временная ошибка API (${response.status}), продолжаю попытки...`);
+            attempts++;
+            continue;
+          }
+
+          return {
+            success: false,
+            error: 'Ошибка при проверке статуса видео',
+          };
+        }
+
+        const data = await response.json();
+        this.logger.debug(`Получен ответ при проверке статуса OpenAI: ${JSON.stringify(data)}`);
+
+        const status = data.status;
+        const progress = data.progress || 0;
+
+        if (status === 'completed') {
+          // Скачиваем видео через OpenAI Files API
+          const videoUrl = await this.getOpenAIVideoUrl(videoJobId);
+          if (!videoUrl) {
+            return {
+              success: false,
+              error: 'Не удалось получить URL видео',
+            };
+          }
+
+          this.logger.log('Видео через OpenAI успешно сгенерировано');
+          return {
+            success: true,
+            videoUrl: videoUrl,
+          };
+        } else if (status === 'failed') {
+          const errorMsg = data.error?.message || 'Генерация видео завершилась с ошибкой';
+          this.logger.error(`Генерация OpenAI видео завершилась с ошибкой: ${errorMsg}`);
+          return {
+            success: false,
+            error: errorMsg,
+          };
+        } else if (status === 'queued' || status === 'processing') {
+          this.logger.debug(`Задача OpenAI все еще обрабатывается, статус: ${status}, прогресс: ${progress}%`);
+        }
+
+        attempts++;
+        this.logger.debug(`Попытка ${attempts}/${maxAttempts}: статус OpenAI видео - ${status}, прогресс: ${progress}%`);
+
+        // Вызываем callback для обновления прогресса
+        if (options?.onProgress) {
+          const statusText = status === 'queued' ? 'в очереди' : status === 'processing' ? `обрабатывается (${progress}%)` : status;
+          options.onProgress(statusText, attempts, maxAttempts);
+        }
+      } catch (error) {
+        this.logger.error('Ошибка при проверке статуса OpenAI видео', error);
+        return {
+          success: false,
+          error: 'Ошибка при проверке статуса видео',
+        };
+      }
+    }
+
+    this.logger.error('Превышено время ожидания генерации OpenAI видео');
+    return {
+      success: false,
+      error: 'Превышено время ожидания генерации видео',
+    };
+  }
+
+  /**
+   * Получает URL для скачивания видео из OpenAI
+   * @param videoJobId - ID задачи видео
+   * @returns Promise<string | null>
+   */
+  private async getOpenAIVideoUrl(videoJobId: string): Promise<string | null> {
+    try {
+      // Получаем информацию о видео задаче
+      const response = await fetch(`${this.openai.baseURL}/videos/${videoJobId}`, {
+        headers: {
+          Authorization: `Bearer ${this.openai.apiKey}`,
+        },
+      });
+
+      if (!response.ok) {
+        this.logger.error(`Ошибка при получении информации о видео: ${response.status}`);
+        return null;
+      }
+
+      // В OpenAI видео может быть доступно напрямую через URL или через файл
+      // Возвращаем временный URL для скачивания (как в случае с файлами)
+      return `${this.openai.baseURL}/videos/${videoJobId}/download`;
+    } catch (error) {
+      this.logger.error('Ошибка при получении URL OpenAI видео', error);
+      return null;
+    }
+  }
+
+  // ==================== Kling API Methods ====================
 
   private generateJWTToken(): string {
     try {
@@ -68,13 +359,13 @@ export class VideoService {
   }
 
   /**
-   * Генерирует видео на основе изображения и текстового промпта
+   * Генерирует видео на основе изображения и текстового промпта через Kling API
    * @param imageBuffer - Buffer изображения
    * @param prompt - текстовое описание для генерации видео
    * @param options - опции для генерации
    * @returns Promise<VideoGenerationResponse> - результат генерации
    */
-  async generateVideoFromImage(imageBuffer: Buffer, prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+  private async generateVideoFromImageKling(imageBuffer: Buffer, prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
     try {
       if (!this.klingAccessKey || !this.klingSecretKey) {
         return {
@@ -83,7 +374,7 @@ export class VideoService {
         };
       }
 
-      this.logger.log(`Начинаю генерацию видео по изображению для промпта: ${prompt}`);
+      this.logger.log(`Начинаю генерацию видео по изображению через Kling для промпта: ${prompt}`);
 
       // Оптимизируем промт через ассистента
       const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
@@ -159,7 +450,7 @@ export class VideoService {
           };
         }
         this.logger.log(`Задача отправлена, ID: ${taskId}, статус: ${status}`);
-        return await this.waitForVideoCompletionImage2Video(taskId, options);
+        return await this.waitForVideoCompletionImage2VideoKling(taskId, options);
       } else {
         this.logger.error(`Неожиданный статус ответа: ${status}`);
         this.logger.error(`Полный ответ API: ${JSON.stringify(data)}`);
@@ -169,7 +460,7 @@ export class VideoService {
         };
       }
     } catch (error) {
-      this.logger.error('Ошибка при генерации видео по изображению', error);
+      this.logger.error('Ошибка при генерации видео по изображению через Kling', error);
       return {
         success: false,
         error: 'Внутренняя ошибка сервера',
@@ -178,12 +469,12 @@ export class VideoService {
   }
 
   /**
-   * Генерирует видео на основе текстового промпта
+   * Генерирует видео на основе текстового промпта через Kling API
    * @param prompt - текстовое описание для генерации видео
    * @param options - опции для генерации
    * @returns Promise<VideoGenerationResponse> - результат генерации
    */
-  async generateVideo(prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+  private async generateVideoKling(prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
     try {
       if (!this.klingAccessKey || !this.klingSecretKey) {
         return {
@@ -192,7 +483,7 @@ export class VideoService {
         };
       }
 
-      this.logger.log(`Начинаю генерацию видео для промпта: ${prompt}`);
+      this.logger.log(`Начинаю генерацию видео через Kling для промпта: ${prompt}`);
 
       // Оптимизируем промт через ассистента
       const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
@@ -269,7 +560,7 @@ export class VideoService {
           };
         }
         this.logger.log(`Задача отправлена, ID: ${taskId}, статус: ${status}`);
-        return await this.waitForVideoCompletion(taskId, options);
+        return await this.waitForVideoCompletionKling(taskId, options);
       } else {
         this.logger.error(`Неожиданный статус ответа: ${status}`);
         this.logger.error(`Полный ответ API: ${JSON.stringify(data)}`);
@@ -279,7 +570,7 @@ export class VideoService {
         };
       }
     } catch (error) {
-      this.logger.error('Ошибка при генерации видео', error);
+      this.logger.error('Ошибка при генерации видео через Kling', error);
       return {
         success: false,
         error: 'Внутренняя ошибка сервера',
@@ -288,11 +579,11 @@ export class VideoService {
   }
 
   /**
-   * Ожидает завершения генерации видео и возвращает результат
+   * Ожидает завершения генерации видео Kling и возвращает результат
    * @param videoId - ID видео в API Kling
    * @returns Promise<VideoGenerationResponse>
    */
-  private async waitForVideoCompletion(videoId: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+  private async waitForVideoCompletionKling(videoId: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
     const maxAttempts = 30; // максимум 5 минут ожидания (30 * 10 секунд)
     let attempts = 0;
 
@@ -381,11 +672,11 @@ export class VideoService {
   }
 
   /**
-   * Ожидает завершения генерации видео по изображению и возвращает результат
+   * Ожидает завершения генерации видео по изображению Kling и возвращает результат
    * @param videoId - ID видео в API Kling
    * @returns Promise<VideoGenerationResponse>
    */
-  private async waitForVideoCompletionImage2Video(videoId: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+  private async waitForVideoCompletionImage2VideoKling(videoId: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
     const maxAttempts = 30; // максимум 5 минут ожидания (30 * 10 секунд)
     let attempts = 0;
 
@@ -473,8 +764,48 @@ export class VideoService {
     };
   }
 
+  // ==================== Public Methods with Provider Selection ====================
+
+  /**
+   * Генерирует видео на основе текстового промпта
+   * Автоматически выбирает провайдера на основе настроек или опций
+   * @param prompt - текстовое описание для генерации видео
+   * @param options - опции для генерации
+   * @returns Promise<VideoGenerationResponse> - результат генерации
+   */
+  async generateVideo(prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+    const provider = options?.provider || this.defaultProvider;
+    this.logger.log(`Генерация видео с использованием провайдера: ${provider}`);
+
+    if (provider === VideoProvider.OPENAI) {
+      return await this.generateVideoOpenAI(prompt, options);
+    } else {
+      return await this.generateVideoKling(prompt, options);
+    }
+  }
+
+  /**
+   * Генерирует видео на основе изображения и текстового промпта
+   * Автоматически выбирает провайдера на основе настроек или опций
+   * @param imageBuffer - Buffer изображения
+   * @param prompt - текстовое описание для генерации видео
+   * @param options - опции для генерации
+   * @returns Promise<VideoGenerationResponse> - результат генерации
+   */
+  async generateVideoFromImage(imageBuffer: Buffer, prompt: string, options?: VideoGenerationOptions): Promise<VideoGenerationResponse> {
+    const provider = options?.provider || this.defaultProvider;
+    this.logger.log(`Генерация видео по изображению с использованием провайдера: ${provider}`);
+
+    if (provider === VideoProvider.OPENAI) {
+      return await this.generateVideoFromImageOpenAI(imageBuffer, prompt, options);
+    } else {
+      return await this.generateVideoFromImageKling(imageBuffer, prompt, options);
+    }
+  }
+
   /**
    * Скачивает видео по URL и возвращает как Buffer
+   * Автоматически определяет провайдера и добавляет необходимые заголовки
    * @param videoUrl - URL видео
    * @returns Promise<Buffer | null>
    */
@@ -482,7 +813,16 @@ export class VideoService {
     try {
       this.logger.log(`Скачиваю видео: ${videoUrl}`);
 
-      const response = await fetch(videoUrl);
+      // Проверяем, нужна ли авторизация для OpenAI
+      const isOpenAIUrl = videoUrl.includes('/videos/') && (videoUrl.includes('api.openai.com') || videoUrl.includes(this.openai.baseURL));
+
+      const headers: Record<string, string> = {};
+      if (isOpenAIUrl) {
+        headers['Authorization'] = `Bearer ${this.openai.apiKey}`;
+        this.logger.debug('Добавлен Authorization заголовок для OpenAI URL');
+      }
+
+      const response = await fetch(videoUrl, { headers });
       if (!response.ok) {
         this.logger.error(`Ошибка при скачивании видео: ${response.status}`);
         return null;

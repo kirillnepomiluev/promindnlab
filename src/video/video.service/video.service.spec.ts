@@ -9,17 +9,17 @@ describe('VideoService', () => {
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         VideoService,
-                         {
-                   provide: ConfigService,
-                   useValue: {
-                     get: jest.fn((key: string) => {
-                       if (key === 'KLING_ACCESS_KEY') return 'test-access-key';
-                       if (key === 'KLING_SECRET_KEY') return 'test-secret-key';
-                                               if (key === 'KLING_API_URL') return 'https://api.klingai.com';
-                       return null;
-                     }),
-                   },
-                 },
+        {
+          provide: ConfigService,
+          useValue: {
+            get: jest.fn((key: string) => {
+              if (key === 'KLING_ACCESS_KEY') return 'test-access-key';
+              if (key === 'KLING_SECRET_KEY') return 'test-secret-key';
+              if (key === 'KLING_API_URL') return 'https://api.klingai.com';
+              return null;
+            }),
+          },
+        },
       ],
     }).compile();
 
@@ -29,4 +29,4 @@ describe('VideoService', () => {
   it('should be defined', () => {
     expect(service).toBeDefined();
   });
-}); 
+});

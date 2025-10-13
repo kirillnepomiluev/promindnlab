@@ -30,7 +30,7 @@ export class OpenAiService {
   private readonly openAi: OpenAI;
   private readonly logger = new Logger(OpenAiService.name);
   private threadMap: Map<number, string> = new Map();
-  
+
   // Система блокировки тредов - Map для отслеживания активных запросов по threadId
   private activeThreads: Map<string, Promise<any>> = new Map();
 
@@ -49,12 +49,7 @@ export class OpenAiService {
     while (size >= 256) {
       await new Promise<void>((resolve, reject) => {
         ffmpeg(inputPath)
-          .outputOptions([
-            '-vf',
-            `scale=${size}:${size}`,
-            '-compression_level',
-            '9',
-          ])
+          .outputOptions(['-vf', `scale=${size}:${size}`, '-compression_level', '9'])
           .output(outPath)
           .on('end', () => resolve())
           .on('error', (err: Error) => reject(err))
@@ -78,19 +73,13 @@ export class OpenAiService {
       throw new Error('Не задана переменная окружения OPENAI_API_KEY_PRO');
     }
     this.logger.debug(`Raw OpenAI API key length: ${rawKey.length}`);
-    this.logger.debug(
-      `API raw key fragment: ${rawKey.slice(0, 5)}...${rawKey.slice(-5)}`,
-    );
+    this.logger.debug(`API raw key fragment: ${rawKey.slice(0, 5)}...${rawKey.slice(-5)}`);
     // Удаляем BOM и переносы
     const key = rawKey.replace(/\s+/g, '').trim();
-    this.logger.debug(
-      `API key fragment: ${key.slice(0, 5)}...${key.slice(-5)}`,
-    );
+    this.logger.debug(`API key fragment: ${key.slice(0, 5)}...${key.slice(-5)}`);
     this.logger.debug(`Sanitized OpenAI API key length: ${key.length}`);
 
-    const baseURL =
-      this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() ||
-      'https://chat.neurolabtg.ru/v1';
+    const baseURL = this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() || 'https://chat.neurolabtg.ru/v1';
 
     this.openAi = new OpenAI({
       apiKey: key,
@@ -115,7 +104,7 @@ export class OpenAiService {
 
     const promise = operation();
     this.activeThreads.set(threadId, promise);
-    
+
     try {
       const result = await promise;
       return result;
@@ -129,9 +118,7 @@ export class OpenAiService {
    */
   private async checkAndWaitForActiveRuns(threadId: string): Promise<void> {
     const runs = await this.openAi.beta.threads.runs.list(threadId);
-    const activeRun = runs.data.find(
-      (run) => run.status === 'in_progress' || run.status === 'queued'
-    );
+    const activeRun = runs.data.find((run) => run.status === 'in_progress' || run.status === 'queued');
 
     if (activeRun) {
       this.logger.log(`Активный run уже выполняется для thread ${threadId}. Ждем завершения...`);
@@ -205,7 +192,7 @@ export class OpenAiService {
     }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
-    
+
     try {
       if (!threadId) {
         // Создаем новый тред, если не существует
@@ -230,17 +217,12 @@ export class OpenAiService {
         });
 
         // Генерируем ответ ассистента по треду
-        const response = await this.openAi.beta.threads.runs.createAndPoll(
-          thread.id,
-          {
-            assistant_id: assistantId,
-          },
-        );
-        
+        const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+          assistant_id: assistantId,
+        });
+
         if (response.status === 'completed') {
-          const messages = await this.openAi.beta.threads.messages.list(
-            response.thread_id,
-          );
+          const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
           const assistantMessage = messages.data[0];
           return await this.buildAnswer(assistantMessage);
         } else {
@@ -250,7 +232,7 @@ export class OpenAiService {
       });
     } catch (error) {
       this.logger.error('Ошибка в чате с ассистентом', error);
-      
+
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
       if (error instanceof Error && error.message.includes('Тред уже занят')) {
         return {
@@ -258,7 +240,7 @@ export class OpenAiService {
           files: [],
         };
       }
-      
+
       return {
         text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
         files: [],
@@ -301,10 +283,7 @@ export class OpenAiService {
    * Генерирует изображение на основе присланной пользователем картинки
    * с помощью endpoint'a createVariation
    */
-  async generateImageFromPhoto(
-    image: Buffer,
-    prompt: string,
-  ): Promise<string | Buffer | null> {
+  async generateImageFromPhoto(image: Buffer, prompt: string): Promise<string | Buffer | null> {
     try {
       // изображение конвертируется в PNG и уменьшатся до < 4 МБ
       const prepared = await this.prepareImage(image);
@@ -341,18 +320,14 @@ export class OpenAiService {
   /**
    * Отправляет в ассистента сообщение вместе с картинкой
    */
-  async chatWithImage(
-    content: string,
-    userId: number,
-    image: Buffer,
-  ): Promise<OpenAiAnswer> {
+  async chatWithImage(content: string, userId: number, image: Buffer): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
     }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
-    
+
     try {
       if (!threadId) {
         thread = await this.openAi.beta.threads.create();
@@ -384,17 +359,12 @@ export class OpenAiService {
           ],
         });
 
-        const response = await this.openAi.beta.threads.runs.createAndPoll(
-          thread.id,
-          {
-            assistant_id: assistantId,
-          },
-        );
-        
+        const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+          assistant_id: assistantId,
+        });
+
         if (response.status === 'completed') {
-          const messages = await this.openAi.beta.threads.messages.list(
-            response.thread_id,
-          );
+          const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
           const assistantMessage = messages.data[0];
           return await this.buildAnswer(assistantMessage);
         } else {
@@ -404,7 +374,7 @@ export class OpenAiService {
       });
     } catch (error) {
       this.logger.error('Ошибка при отправке сообщения с картинкой', error);
-      
+
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
       if (error instanceof Error && error.message.includes('Тред уже занят')) {
         return {
@@ -412,7 +382,7 @@ export class OpenAiService {
           files: [],
         };
       }
-      
+
       return {
         text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
         files: [],
@@ -428,10 +398,10 @@ export class OpenAiService {
   async optimizeVideoPrompt(prompt: string): Promise<string> {
     try {
       this.logger.log(`Оптимизирую промт для видео: ${prompt}`);
-      
+
       // Создаем новый тред для оптимизации промта
       const thread = await this.openAi.beta.threads.create();
-      
+
       // Добавляем сообщение пользователя в тред
       await this.openAi.beta.threads.messages.create(thread.id, {
         role: 'user',
@@ -439,20 +409,15 @@ export class OpenAiService {
       });
 
       // Генерируем ответ ассистента-оптимизатора
-      const response = await this.openAi.beta.threads.runs.createAndPoll(
-        thread.id,
-        {
-          assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID,
-        },
-      );
+      const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+        assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID,
+      });
 
       if (response.status === 'completed') {
-        const messages = await this.openAi.beta.threads.messages.list(
-          response.thread_id,
-        );
+        const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
         const assistantMessage = messages.data[0];
         const optimizedPrompt = (assistantMessage.content?.[0] as any)?.text?.value || prompt;
-        
+
         this.logger.log(`Промт оптимизирован: ${optimizedPrompt}`);
         return optimizedPrompt;
       } else {
@@ -471,19 +436,14 @@ export class OpenAiService {
    * fileBuffer - содержимое файла
    * filename - имя файла (нужно для корректной передачи в API)
    */
-  async chatWithFile(
-    content: string,
-    userId: number,
-    fileBuffer: Buffer,
-    filename: string,
-  ): Promise<OpenAiAnswer> {
+  async chatWithFile(content: string, userId: number, fileBuffer: Buffer, filename: string): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
     }
     let thread: { id: string };
     const assistantId = 'asst_naDxPxcSCe4YgEW3S7fXf4wd';
-    
+
     try {
       if (!threadId) {
         thread = await this.openAi.beta.threads.create();
@@ -517,17 +477,12 @@ export class OpenAiService {
           ],
         });
 
-        const response = await this.openAi.beta.threads.runs.createAndPoll(
-          thread.id,
-          {
-            assistant_id: assistantId,
-          },
-        );
-        
+        const response = await this.openAi.beta.threads.runs.createAndPoll(thread.id, {
+          assistant_id: assistantId,
+        });
+
         if (response.status === 'completed') {
-          const messages = await this.openAi.beta.threads.messages.list(
-            response.thread_id,
-          );
+          const messages = await this.openAi.beta.threads.messages.list(response.thread_id);
           const assistantMessage = messages.data[0];
           return await this.buildAnswer(assistantMessage);
         } else {
@@ -537,7 +492,7 @@ export class OpenAiService {
       });
     } catch (error) {
       this.logger.error('Ошибка при отправке сообщения с файлом', error);
-      
+
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
       if (error instanceof Error && error.message.includes('Тред уже занят')) {
         return {
@@ -545,7 +500,7 @@ export class OpenAiService {
           files: [],
         };
       }
-      
+
       return {
         text: '🤖 Не удалось получить ответ от OpenAI. Попробуйте позже',
         files: [],
@@ -558,15 +513,15 @@ export class OpenAiService {
    */
   getActiveThreadsStatus(): { threadId: string; isActive: boolean }[] {
     const status: { threadId: string; isActive: boolean }[] = [];
-    
+
     // Добавляем информацию о треде из threadMap
     for (const [userId, threadId] of this.threadMap.entries()) {
       status.push({
         threadId: `${threadId} (user: ${userId})`,
-        isActive: this.isThreadActive(threadId)
+        isActive: this.isThreadActive(threadId),
       });
     }
-    
+
     return status;
   }
 }

@@ -7,4 +7,4 @@ import { OpenaiModule } from '../openai/openai.module';
   providers: [VideoService],
   exports: [VideoService],
 })
-export class VideoModule {} 
+export class VideoModule {}

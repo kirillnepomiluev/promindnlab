@@ -23,11 +23,7 @@ describe('OpenaiService', () => {
     } as any;
 
     const module: TestingModule = await Test.createTestingModule({
-      providers: [
-        OpenAiService,
-        { provide: ConfigService, useValue: mockConfigService },
-        { provide: SessionService, useValue: mockSessionService },
-      ],
+      providers: [OpenAiService, { provide: ConfigService, useValue: mockConfigService }, { provide: SessionService, useValue: mockSessionService }],
     }).compile();
 
     provider = module.get<OpenAiService>(OpenAiService);
@@ -48,12 +44,8 @@ describe('OpenaiService', () => {
       expect(provider['isThreadActive'](thread2)).toBe(false);
 
       // Симулируем выполнение операций в разных тредах
-      const operation1 = jest.fn().mockImplementation(() => 
-        new Promise(resolve => setTimeout(() => resolve('result1'), 100))
-      );
-      const operation2 = jest.fn().mockImplementation(() => 
-        new Promise(resolve => setTimeout(() => resolve('result2'), 50))
-      );
+      const operation1 = jest.fn().mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('result1'), 100)));
+      const operation2 = jest.fn().mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('result2'), 50)));
 
       // Запускаем операции параллельно
       const promise1 = provider['lockThread'](thread1, operation1);
@@ -79,14 +71,10 @@ describe('OpenaiService', () => {
       const threadId = 'test-thread';
 
       // Первая операция
-      const operation1 = jest.fn().mockImplementation(() => 
-        new Promise(resolve => setTimeout(() => resolve('result1'), 200))
-      );
+      const operation1 = jest.fn().mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve('result1'), 200)));
 
       // Вторая операция (должна быть заблокирована)
-      const operation2 = jest.fn().mockImplementation(() => 
-        Promise.resolve('result2')
-      );
+      const operation2 = jest.fn().mockImplementation(() => Promise.resolve('result2'));
 
       // Запускаем первую операцию
       const promise1 = provider['lockThread'](threadId, operation1);
@@ -95,9 +83,7 @@ describe('OpenaiService', () => {
       expect(provider['isThreadActive'](threadId)).toBe(true);
 
       // Пытаемся запустить вторую операцию в том же треде
-      await expect(provider['lockThread'](threadId, operation2))
-        .rejects
-        .toThrow('Тред уже занят другим запросом');
+      await expect(provider['lockThread'](threadId, operation2)).rejects.toThrow('Тред уже занят другим запросом');
 
       // Ждем завершения первой операции
       const result1 = await promise1;
@@ -111,14 +97,10 @@ describe('OpenaiService', () => {
       const threadId = 'error-thread';
 
       // Операция, которая завершается ошибкой
-      const errorOperation = jest.fn().mockImplementation(() => 
-        Promise.reject(new Error('Test error'))
-      );
+      const errorOperation = jest.fn().mockImplementation(() => Promise.reject(new Error('Test error')));
 
       // Пытаемся выполнить операцию
-      await expect(provider['lockThread'](threadId, errorOperation))
-        .rejects
-        .toThrow('Test error');
+      await expect(provider['lockThread'](threadId, errorOperation)).rejects.toThrow('Test error');
 
       // Проверяем, что тред разблокирован даже после ошибки
       expect(provider['isThreadActive'](threadId)).toBe(false);
@@ -135,8 +117,8 @@ describe('OpenaiService', () => {
       const status = provider.getActiveThreadsStatus();
 
       expect(status).toHaveLength(2);
-      expect(status.find(s => s.threadId.includes('thread-1'))?.isActive).toBe(true);
-      expect(status.find(s => s.threadId.includes('thread-2'))?.isActive).toBe(false);
+      expect(status.find((s) => s.threadId.includes('thread-1'))?.isActive).toBe(true);
+      expect(status.find((s) => s.threadId.includes('thread-2'))?.isActive).toBe(false);
     });
   });
 });
