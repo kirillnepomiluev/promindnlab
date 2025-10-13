@@ -30,6 +30,7 @@ export interface VideoGenerationResponse {
 export interface VideoGenerationOptions {
   onProgress?: (status: string, attempt: number, maxAttempts: number) => void;
   provider?: VideoProvider;
+  quality?: 'lite' | 'pro';
 }
 
 @Injectable()
@@ -128,11 +129,16 @@ export class VideoService {
       const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
       this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
 
+      // Определяем параметры в зависимости от качества
+      const quality = options?.quality || 'lite';
+      const model = quality === 'pro' ? 'sora-2-pro' : 'sora-2';
+      const size = quality === 'pro' ? '1024x1792' : '720x1280';
+
       // Создаем запрос на генерацию видео
       const formData = new FormData();
-      formData.append('model', 'sora-2');
+      formData.append('model', model);
       formData.append('prompt', optimizedPrompt);
-      formData.append('size', '720x1280'); // Вертикальное видео по умолчанию
+      formData.append('size', size);
       formData.append('seconds', '4');
 
       const response = await fetch(`${this.openai.baseURL}/videos`, {
@@ -195,13 +201,20 @@ export class VideoService {
       const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
       this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
 
-      // Изменяем размер изображения до 720x1280
-      this.logger.debug('Изменяю размер изображения до 720x1280...');
-      const resizedImage = await this.resizeImageForVideo(imageBuffer, 720, 1280);
+      // Определяем параметры в зависимости от качества
+      const quality = options?.quality || 'lite';
+      const model = quality === 'pro' ? 'sora-2-pro' : 'sora-2';
+      const width = quality === 'pro' ? 1024 : 720;
+      const height = quality === 'pro' ? 1792 : 1280;
+      const size = quality === 'pro' ? '1024x1792' : '720x1280';
+
+      // Изменяем размер изображения в соответствии с выбранным качеством
+      this.logger.debug(`Изменяю размер изображения до ${size}...`);
+      const resizedImage = await this.resizeImageForVideo(imageBuffer, width, height);
 
       // Создаем FormData и добавляем файл напрямую
       const formData = new FormData();
-      formData.append('model', 'sora-2');
+      formData.append('model', model);
       formData.append('prompt', optimizedPrompt);
       // Конвертируем Buffer в Readable stream для form-data
       const imageStream = Readable.from(resizedImage);
@@ -209,7 +222,7 @@ export class VideoService {
         filename: 'reference.png',
         contentType: 'image/png',
       });
-      formData.append('size', '720x1280'); // Вертикальное видео по умолчанию
+      formData.append('size', size);
       formData.append('seconds', '4');
 
       const response = await fetch(`${this.openai.baseURL}/videos`, {
