@@ -127,7 +127,25 @@ export class TelegramService {
   private async updateVideoProgress(ctx: Context, messageId: number, status: string, attempt: number, _maxAttempts: number) {
     try {
       const elapsedSeconds = attempt * 10;
-      const progressText = `СОЗДАЮ ВИДЕО ---- ${elapsedSeconds}с ---- ${status}`;
+      // Форматируем статус для отображения пользователю
+      let displayStatus = status;
+      
+      // Проверяем, содержит ли статус процент (например "обрабатывается (55%)")
+      if (status.includes('%')) {
+        // Извлекаем процент из статуса
+        const percentMatch = status.match(/\((\d+)%\)/);
+        if (percentMatch) {
+          displayStatus = `прогресс: ${percentMatch[1]}%`;
+        }
+      } else if (status === 'в очереди' || status.includes('queued')) {
+        displayStatus = 'статус: в очереди';
+      } else if (status === 'обрабатывается' || status.includes('processing')) {
+        displayStatus = 'статус: обрабатывается';
+      } else if (status === 'отправлена' || status.includes('submitted')) {
+        displayStatus = 'статус: отправлена';
+      }
+      
+      const progressText = `СОЗДАЮ ВИДЕО ---- ${elapsedSeconds}с ---- ${displayStatus}`;
       await ctx.telegram.editMessageCaption(ctx.chat.id, messageId, undefined, progressText);
     } catch (error) {
       this.logger.error('Ошибка при обновлении прогресса видео', error);

@@ -331,7 +331,7 @@ export class VideoService {
             success: false,
             error: errorMsg,
           };
-        } else if (status === 'queued' || status === 'processing') {
+        } else if (status === 'queued' || status === 'processing' || status === 'in_progress') {
           this.logger.debug(`Задача OpenAI все еще обрабатывается, статус: ${status}, прогресс: ${progress}%`);
         }
 
@@ -340,7 +340,14 @@ export class VideoService {
 
         // Вызываем callback для обновления прогресса
         if (options?.onProgress) {
-          const statusText = status === 'queued' ? 'в очереди' : status === 'processing' ? `обрабатывается (${progress}%)` : status;
+          let statusText: string;
+          if (status === 'queued') {
+            statusText = 'в очереди';
+          } else if (status === 'processing' || status === 'in_progress') {
+            statusText = `обрабатывается (${progress}%)`;
+          } else {
+            statusText = status;
+          }
           options.onProgress(statusText, attempts, maxAttempts);
         }
       } catch (error) {
@@ -716,7 +723,9 @@ export class VideoService {
 
         // Вызываем callback для обновления прогресса
         if (options?.onProgress) {
-          const statusText = status === 'submitted' ? 'отправлена' : status === 'processing' ? 'обрабатывается' : status;
+          // Примерно вычисляем прогресс на основе попыток (Kling API не предоставляет точный процент)
+          const estimatedProgress = Math.min(Math.round((attempts / maxAttempts) * 100), 99);
+          const statusText = status === 'submitted' ? 'в очереди' : status === 'processing' ? `обрабатывается (${estimatedProgress}%)` : status;
           options.onProgress(statusText, attempts, maxAttempts);
         }
       } catch (error) {
@@ -809,7 +818,9 @@ export class VideoService {
 
         // Вызываем callback для обновления прогресса
         if (options?.onProgress) {
-          const statusText = status === 'submitted' ? 'отправлена' : status === 'processing' ? 'обрабатывается' : status;
+          // Примерно вычисляем прогресс на основе попыток (Kling API не предоставляет точный процент)
+          const estimatedProgress = Math.min(Math.round((attempts / maxAttempts) * 100), 99);
+          const statusText = status === 'submitted' ? 'в очереди' : status === 'processing' ? `обрабатывается (${estimatedProgress}%)` : status;
           options.onProgress(statusText, attempts, maxAttempts);
         }
       } catch (error) {
