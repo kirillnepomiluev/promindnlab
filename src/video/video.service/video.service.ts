@@ -4,8 +4,17 @@ import { OpenAiService } from '../../openai/openai.service/openai.service';
 import fetch from 'node-fetch';
 import * as jwt from 'jsonwebtoken';
 import OpenAI from 'openai';
-import { toFile } from 'openai/uploads';
-import FormData from 'form-data';
+import * as FormData from 'form-data';
+import { Readable } from 'stream';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import * as crypto from 'crypto';
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpeg = require('fluent-ffmpeg');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const ffmpegPath = require('ffmpeg-static');
+ffmpeg.setFfmpegPath(ffmpegPath);
 
 export enum VideoProvider {
   KLING = 'kling',
@@ -62,6 +71,45 @@ export class VideoService {
     const configuredProvider = this.configService.get<string>('VIDEO_PROVIDER')?.toLowerCase();
     this.defaultProvider = configuredProvider === 'kling' ? VideoProvider.KLING : VideoProvider.OPENAI;
     this.logger.log(`Провайдер видео по умолчанию: ${this.defaultProvider}`);
+  }
+
+  // ==================== Helper Methods ====================
+
+  /**
+   * Изменяет размер изображения до указанных ширины и высоты
+   * @param image - Buffer изображения
+   * @param width - целевая ширина
+   * @param height - целевая высота
+   * @returns Promise<Buffer> - изображение с измененным размером
+   */
+  private async resizeImageForVideo(image: Buffer, width: number, height: number): Promise<Buffer> {
+    const tmpDir = os.tmpdir();
+    const inputPath = path.join(tmpDir, `${crypto.randomUUID()}.src`);
+    const outPath = path.join(tmpDir, `${crypto.randomUUID()}.png`);
+
+    try {
+      await fs.writeFile(inputPath, image);
+
+      await new Promise<void>((resolve, reject) => {
+        ffmpeg(inputPath)
+          .outputOptions([
+            '-vf',
+            `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+            '-compression_level',
+            '9',
+          ])
+          .output(outPath)
+          .on('end', () => resolve())
+          .on('error', (err: Error) => reject(err))
+          .run();
+      });
+
+      const result = await fs.readFile(outPath);
+      this.logger.debug(`Изображение изменено до ${width}x${height}, размер: ${result.length} байт`);
+      return result;
+    } finally {
+      await Promise.allSettled([fs.unlink(inputPath), fs.unlink(outPath)]);
+    }
   }
 
   // ==================== OpenAI Video API Methods ====================
@@ -147,14 +195,20 @@ export class VideoService {
       const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
       this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
 
-      // Конвертируем Buffer в File для OpenAI
-      const imageFile = await toFile(imageBuffer, 'reference.png', { type: 'image/png' });
+      // Изменяем размер изображения до 720x1280
+      this.logger.debug('Изменяю размер изображения до 720x1280...');
+      const resizedImage = await this.resizeImageForVideo(imageBuffer, 720, 1280);
 
-      // Создаем запрос на генерацию видео с изображением
+      // Создаем FormData и добавляем файл напрямую
       const formData = new FormData();
       formData.append('model', 'sora-2');
       formData.append('prompt', optimizedPrompt);
-      formData.append('input_reference', imageFile as any);
+      // Конвертируем Buffer в Readable stream для form-data
+      const imageStream = Readable.from(resizedImage);
+      formData.append('input_reference', imageStream, {
+        filename: 'reference.png',
+        contentType: 'image/png',
+      });
       formData.append('size', '720x1280'); // Вертикальное видео по умолчанию
       formData.append('seconds', '4');
 
@@ -246,16 +300,26 @@ export class VideoService {
         const progress = data.progress || 0;
 
         if (status === 'completed') {
-          // Скачиваем видео через OpenAI Files API
-          const videoUrl = await this.getOpenAIVideoUrl(videoJobId);
+          // Для OpenAI API видео доступно через специальный endpoint
+          // Сначала проверяем, есть ли прямой URL в ответе
+          let videoUrl = data.output?.url || data.url || data.output?.download_url || data.download_url;
+
+          // Если прямого URL нет, формируем URL для скачивания через Files API
           if (!videoUrl) {
-            return {
-              success: false,
-              error: 'Не удалось получить URL видео',
-            };
+            // Проверяем, есть ли file_id
+            const fileId = data.output?.file_id || data.file_id;
+            if (fileId) {
+              videoUrl = `${this.openai.baseURL}/files/${fileId}/content`;
+              this.logger.debug(`Использую Files API для скачивания: ${videoUrl}`);
+            } else {
+              // Используем прямой endpoint для скачивания видео
+              videoUrl = `${this.openai.baseURL}/videos/${videoJobId}/content`;
+              this.logger.debug(`Использую Video API для скачивания: ${videoUrl}`);
+            }
           }
 
           this.logger.log('Видео через OpenAI успешно сгенерировано');
+          this.logger.debug(`URL видео: ${videoUrl}`);
           return {
             success: true,
             videoUrl: videoUrl,
@@ -814,7 +878,10 @@ export class VideoService {
       this.logger.log(`Скачиваю видео: ${videoUrl}`);
 
       // Проверяем, нужна ли авторизация для OpenAI
-      const isOpenAIUrl = videoUrl.includes('/videos/') && (videoUrl.includes('api.openai.com') || videoUrl.includes(this.openai.baseURL));
+      const baseUrl = this.openai.baseURL.replace(/\/v1$/, '').replace(/\/$/, '');
+      const isOpenAIUrl =
+        (videoUrl.includes('/videos/') || videoUrl.includes('/files/')) &&
+        (videoUrl.includes('api.openai.com') || videoUrl.includes(baseUrl) || videoUrl.startsWith(this.openai.baseURL));
 
       const headers: Record<string, string> = {};
       if (isOpenAIUrl) {
@@ -822,9 +889,15 @@ export class VideoService {
         this.logger.debug('Добавлен Authorization заголовок для OpenAI URL');
       }
 
+      this.logger.debug(`Заголовки для скачивания: ${JSON.stringify(headers)}`);
+
       const response = await fetch(videoUrl, { headers });
+
       if (!response.ok) {
+        const errorText = await response.text();
         this.logger.error(`Ошибка при скачивании видео: ${response.status}`);
+        this.logger.error(`Тело ответа: ${errorText}`);
+        this.logger.error(`URL: ${videoUrl}`);
         return null;
       }
 
@@ -834,6 +907,7 @@ export class VideoService {
       return buffer;
     } catch (error) {
       this.logger.error('Ошибка при скачивании видео', error);
+      this.logger.error(`URL который пытались скачать: ${videoUrl}`);
       return null;
     }
   }
