@@ -31,6 +31,7 @@ export interface VideoGenerationOptions {
   onProgress?: (status: string, attempt: number, maxAttempts: number) => void;
   provider?: VideoProvider;
   quality?: 'lite' | 'pro';
+  duration?: number; // длительность видео в секундах
 }
 
 @Injectable()
@@ -139,7 +140,7 @@ export class VideoService {
       formData.append('model', model);
       formData.append('prompt', optimizedPrompt);
       formData.append('size', size);
-      formData.append('seconds', '4');
+      formData.append('seconds', String(options?.duration ?? 4));
 
       const response = await fetch(`${this.openai.baseURL}/videos`, {
         method: 'POST',
@@ -223,7 +224,7 @@ export class VideoService {
         contentType: 'image/png',
       });
       formData.append('size', size);
-      formData.append('seconds', '4');
+      formData.append('seconds', String(options?.duration ?? 4));
 
       const response = await fetch(`${this.openai.baseURL}/videos`, {
         method: 'POST',
@@ -475,7 +476,7 @@ export class VideoService {
       const requestBody = {
         model_name: 'kling-v1-6',
         mode: 'std',
-        duration: '5',
+        duration: String(options?.duration ?? 5),
         image: imageBase64,
         prompt: optimizedPrompt,
         cfg_scale: 0.5,
@@ -583,7 +584,7 @@ export class VideoService {
       const requestBody = {
         model_name: 'kling-v1-6',
         prompt: optimizedPrompt,
-        duration: '5', // 5 секунд как требовалось (строка согласно документации)
+        duration: String(options?.duration ?? 5), // длительность в секундах (строка согласно документации)
         aspect_ratio: '1:1', // квадратное видео
         mode: 'std', // стандартный режим
       };

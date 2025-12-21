@@ -36,7 +36,17 @@ export class TelegramService {
   // которые перешли по пригласительной ссылке
   private pendingInvites = new Map<number, string>();
   // временное хранилище для запросов на генерацию видео
-  private pendingVideoRequests = new Map<number, { prompt: string; imageBuffer?: Buffer; messageId?: number }>();
+  private pendingVideoRequests = new Map<
+    number,
+    {
+      prompt: string;
+      imageBuffer?: Buffer;
+      messageId?: number;
+      duration?: number;
+      quality?: 'lite' | 'pro';
+      confirmationMessageId?: number;
+    }
+  >();
   // ссылка на основной бот компании, где проходит первоначальная регистрация
   private readonly mainBotUrl: string;
 
@@ -127,10 +137,14 @@ export class TelegramService {
   }
 
   // Показать меню выбора качества видео
-  private async showVideoQualitySelection(ctx: Context, prompt: string, imageBuffer?: Buffer) {
-    const message = imageBuffer
+  private async showVideoQualitySelection(ctx: Context, prompt: string, imageBuffer?: Buffer, duration?: number) {
+    let message = imageBuffer
       ? `Пожалуйста, выберите качество генерации видео.\nВидео по фото и промпт: "${prompt}"`
       : `Пожалуйста, выберите качество генерации видео.\nВидео по тексту и промпт: "${prompt}"`;
+
+    if (duration) {
+      message += `\nДлительность: ${duration} секунд`;
+    }
 
     const sentMessage = await ctx.reply(
       message,
@@ -145,18 +159,73 @@ export class TelegramService {
       prompt,
       imageBuffer,
       messageId: sentMessage.message_id,
+      duration,
     });
   }
 
-  // Генерация видео с выбранным качеством
-  private async generateVideoWithQuality(ctx: Context, user: UserProfile, quality: 'lite' | 'pro') {
+  // Показать подтверждение списания токенов
+  private async showVideoConfirmation(ctx: Context, quality: 'lite' | 'pro', messageId: number) {
     const request = this.pendingVideoRequests.get(ctx.from.id);
     if (!request) {
       await ctx.reply('Запрос на генерацию видео не найден. Пожалуйста, попробуйте снова.');
       return;
     }
 
-    const { prompt, imageBuffer } = request;
+    const cost = quality === 'pro' ? this.COST_VIDEO_PRO : this.COST_VIDEO_LITE;
+    const { prompt, duration } = request;
+
+    let message = `За данную генерацию будет списано ${cost} токенов.\n\n`;
+    message += `Качество: ${quality === 'pro' ? 'Про' : 'Лайт'}\n`;
+    if (duration) {
+      message += `Длительность: ${duration} секунд\n`;
+    }
+    message += `Промпт: "${prompt}"`;
+
+    try {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        messageId,
+        undefined,
+        message,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('Отмена', 'video_cancel')],
+          [Markup.button.callback('Принять', 'video_confirm')],
+        ]),
+      );
+
+      // Обновляем запрос с качеством и ID сообщения подтверждения
+      this.pendingVideoRequests.set(ctx.from.id, {
+        ...request,
+        quality,
+        confirmationMessageId: messageId,
+      });
+    } catch (error) {
+      this.logger.warn('Не удалось отредактировать сообщение с подтверждением', error);
+      // Fallback: отправляем новое сообщение
+      const sentMessage = await ctx.reply(
+        message,
+        Markup.inlineKeyboard([
+          [Markup.button.callback('Отмена', 'video_cancel')],
+          [Markup.button.callback('Принять', 'video_confirm')],
+        ]),
+      );
+      this.pendingVideoRequests.set(ctx.from.id, {
+        ...request,
+        quality,
+        confirmationMessageId: sentMessage.message_id,
+      });
+    }
+  }
+
+  // Генерация видео с выбранным качеством
+  private async generateVideoWithQuality(ctx: Context, user: UserProfile, quality: 'lite' | 'pro') {
+    const request = this.pendingVideoRequests.get(ctx.from.id);
+    if (!request || !request.quality) {
+      await ctx.reply('Запрос на генерацию видео не найден. Пожалуйста, попробуйте снова.');
+      return;
+    }
+
+    const { prompt, imageBuffer, duration } = request;
     const cost = quality === 'pro' ? this.COST_VIDEO_PRO : this.COST_VIDEO_LITE;
 
     // Проверяем и списываем токены
@@ -172,10 +241,11 @@ export class TelegramService {
     const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
 
     try {
-      // Генерируем видео с указанным качеством
+      // Генерируем видео с указанным качеством и длительностью
       const videoResult = imageBuffer
         ? await this.video.generateVideoFromImage(imageBuffer, prompt, {
             quality,
+            duration,
             onProgress: (status, attempt, maxAttempts) => {
               if (attempt === 0) {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
@@ -186,6 +256,7 @@ export class TelegramService {
           })
         : await this.video.generateVideo(prompt, {
             quality,
+            duration,
             onProgress: (status, attempt, maxAttempts) => {
               if (attempt === 0) {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
@@ -493,14 +564,40 @@ export class TelegramService {
       const answer = await this.openai.chat(q, ctx.message.from.id);
       await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-      if (answer.text.startsWith('/video')) {
-        const prompt = answer.text.replace('/video', '').trim();
-        if (!prompt) {
-          await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+      // Проверяем команды с длительностью /video5, /video10, /video15
+      let duration: number | undefined;
+      let videoCommand = answer.text;
+      if (answer.text.startsWith('/video5')) {
+        duration = 5;
+        videoCommand = answer.text.replace('/video5', '').trim();
+      } else if (answer.text.startsWith('/video10')) {
+        duration = 10;
+        videoCommand = answer.text.replace('/video10', '').trim();
+      } else if (answer.text.startsWith('/video15')) {
+        duration = 15;
+        videoCommand = answer.text.replace('/video15', '').trim();
+      } else if (answer.text.startsWith('/video')) {
+        videoCommand = answer.text.replace('/video', '').trim();
+      } else if (answer.text.startsWith('/в5')) {
+        duration = 5;
+        videoCommand = answer.text.replace('/в5', '').trim();
+      } else if (answer.text.startsWith('/в10')) {
+        duration = 10;
+        videoCommand = answer.text.replace('/в10', '').trim();
+      } else if (answer.text.startsWith('/в15')) {
+        duration = 15;
+        videoCommand = answer.text.replace('/в15', '').trim();
+      } else if (answer.text.startsWith('/в')) {
+        videoCommand = answer.text.replace('/в', '').trim();
+      }
+
+      if (videoCommand !== answer.text) {
+        if (!videoCommand) {
+          await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды');
           return;
         }
         // Показываем меню выбора качества
-        await this.showVideoQualitySelection(ctx, prompt);
+        await this.showVideoQualitySelection(ctx, videoCommand, undefined, duration);
       } else if (answer.text.startsWith('/imagine')) {
         if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
         const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
@@ -562,14 +659,40 @@ export class TelegramService {
           return next();
         }
 
-        if (q.startsWith('/video') || q.startsWith('/в')) {
-          const prompt = q.replace('/video', '').replace('/в', '').trim();
+        // Проверяем команды с длительностью /в5, /в10, /в15
+        let duration: number | undefined;
+        let prompt: string;
+        if (q.startsWith('/в5')) {
+          duration = 5;
+          prompt = q.replace('/в5', '').trim();
+        } else if (q.startsWith('/в10')) {
+          duration = 10;
+          prompt = q.replace('/в10', '').trim();
+        } else if (q.startsWith('/в15')) {
+          duration = 15;
+          prompt = q.replace('/в15', '').trim();
+        } else if (q.startsWith('/video5')) {
+          duration = 5;
+          prompt = q.replace('/video5', '').trim();
+        } else if (q.startsWith('/video10')) {
+          duration = 10;
+          prompt = q.replace('/video10', '').trim();
+        } else if (q.startsWith('/video15')) {
+          duration = 15;
+          prompt = q.replace('/video15', '').trim();
+        } else if (q.startsWith('/video') || q.startsWith('/в')) {
+          prompt = q.replace('/video', '').replace('/в', '').trim();
+        } else {
+          prompt = '';
+        }
+
+        if (prompt !== '' || q.startsWith('/video') || q.startsWith('/в')) {
           if (!prompt) {
-            await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+            await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды');
             return;
           }
           // Показываем меню выбора качества
-          await this.showVideoQualitySelection(ctx, prompt);
+          await this.showVideoQualitySelection(ctx, prompt, undefined, duration);
         } else if (q.startsWith('/image') || q.startsWith('/и')) {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
@@ -631,14 +754,40 @@ export class TelegramService {
             // Удаляем сообщение "ДУМАЮ" только после успешного получения ответа
             await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-            if (answer.text.startsWith('/video') || answer.text.startsWith('/в')) {
-              const prompt = answer.text.replace('/video', '').replace('/в', '').trim();
-              if (!prompt) {
-                await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+            // Проверяем команды с длительностью
+            let duration: number | undefined;
+            let videoCommand = answer.text;
+            if (answer.text.startsWith('/video5')) {
+              duration = 5;
+              videoCommand = answer.text.replace('/video5', '').trim();
+            } else if (answer.text.startsWith('/video10')) {
+              duration = 10;
+              videoCommand = answer.text.replace('/video10', '').trim();
+            } else if (answer.text.startsWith('/video15')) {
+              duration = 15;
+              videoCommand = answer.text.replace('/video15', '').trim();
+            } else if (answer.text.startsWith('/video')) {
+              videoCommand = answer.text.replace('/video', '').trim();
+            } else if (answer.text.startsWith('/в5')) {
+              duration = 5;
+              videoCommand = answer.text.replace('/в5', '').trim();
+            } else if (answer.text.startsWith('/в10')) {
+              duration = 10;
+              videoCommand = answer.text.replace('/в10', '').trim();
+            } else if (answer.text.startsWith('/в15')) {
+              duration = 15;
+              videoCommand = answer.text.replace('/в15', '').trim();
+            } else if (answer.text.startsWith('/в')) {
+              videoCommand = answer.text.replace('/в', '').trim();
+            }
+
+            if (videoCommand !== answer.text) {
+              if (!videoCommand) {
+                await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды');
                 return;
               }
               // Показываем меню выбора качества
-              await this.showVideoQualitySelection(ctx, prompt);
+              await this.showVideoQualitySelection(ctx, videoCommand, undefined, duration);
             } else if (answer.text.startsWith('/imagine')) {
               if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
               const drawMsg = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
@@ -715,13 +864,37 @@ export class TelegramService {
             await ctx.reply('Не удалось сгенерировать изображение');
           }
         } else if (caption.startsWith('/video') || caption.startsWith('/в')) {
-          const prompt = caption.replace('/video', '').replace('/в', '').trim();
+          // Проверяем команды с длительностью
+          let duration: number | undefined;
+          let prompt: string;
+          if (caption.startsWith('/в5')) {
+            duration = 5;
+            prompt = caption.replace('/в5', '').trim();
+          } else if (caption.startsWith('/в10')) {
+            duration = 10;
+            prompt = caption.replace('/в10', '').trim();
+          } else if (caption.startsWith('/в15')) {
+            duration = 15;
+            prompt = caption.replace('/в15', '').trim();
+          } else if (caption.startsWith('/video5')) {
+            duration = 5;
+            prompt = caption.replace('/video5', '').trim();
+          } else if (caption.startsWith('/video10')) {
+            duration = 10;
+            prompt = caption.replace('/video10', '').trim();
+          } else if (caption.startsWith('/video15')) {
+            duration = 15;
+            prompt = caption.replace('/video15', '').trim();
+          } else {
+            prompt = caption.replace('/video', '').replace('/в', '').trim();
+          }
+
           if (!prompt) {
-            await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды /video');
+            await ctx.reply('Пожалуйста, укажите описание для генерации видео после команды');
             return;
           }
           // Показываем меню выбора качества для видео по изображению
-          await this.showVideoQualitySelection(ctx, prompt, buffer);
+          await this.showVideoQualitySelection(ctx, prompt, buffer, duration);
         } else {
           if (!(await this.chargeTokens(ctx, user, this.COST_TEXT))) return;
           const thinkingMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ДУМАЮ ...');
@@ -1122,13 +1295,13 @@ export class TelegramService {
       const user = await this.findOrCreateProfile(ctx.from, undefined, ctx);
       if (!user) return;
 
-      try {
-        await ctx.editMessageText('Выбрано качество: Лайт. Начинаю генерацию...');
-      } catch (error) {
-        this.logger.warn('Не удалось отредактировать сообщение', error);
+      const messageId = ctx.callbackQuery.message && 'message_id' in ctx.callbackQuery.message ? ctx.callbackQuery.message.message_id : undefined;
+      if (!messageId) {
+        await ctx.reply('Ошибка: не удалось получить ID сообщения');
+        return;
       }
 
-      await this.generateVideoWithQuality(ctx, user, 'lite');
+      await this.showVideoConfirmation(ctx, 'lite', messageId);
     });
 
     this.bot.action('video_quality_pro', async (ctx) => {
@@ -1136,13 +1309,53 @@ export class TelegramService {
       const user = await this.findOrCreateProfile(ctx.from, undefined, ctx);
       if (!user) return;
 
-      try {
-        await ctx.editMessageText('Выбрано качество: Про. Начинаю генерацию...');
-      } catch (error) {
-        this.logger.warn('Не удалось отредактировать сообщение', error);
+      const messageId = ctx.callbackQuery.message && 'message_id' in ctx.callbackQuery.message ? ctx.callbackQuery.message.message_id : undefined;
+      if (!messageId) {
+        await ctx.reply('Ошибка: не удалось получить ID сообщения');
+        return;
       }
 
-      await this.generateVideoWithQuality(ctx, user, 'pro');
+      await this.showVideoConfirmation(ctx, 'pro', messageId);
+    });
+
+    // Обработка подтверждения генерации видео
+    this.bot.action('video_confirm', async (ctx) => {
+      await ctx.answerCbQuery();
+      const user = await this.findOrCreateProfile(ctx.from, undefined, ctx);
+      if (!user) return;
+
+      const request = this.pendingVideoRequests.get(ctx.from.id);
+      if (!request || !request.quality) {
+        await ctx.reply('Запрос на генерацию видео не найден. Пожалуйста, попробуйте снова.');
+        return;
+      }
+
+      // Удаляем сообщение с подтверждением (опционально, можно оставить)
+      try {
+        await ctx.deleteMessage();
+      } catch (error) {
+        this.logger.warn('Не удалось удалить сообщение с подтверждением', error);
+      }
+
+      // Вызываем генерацию с выбранным качеством
+      await this.generateVideoWithQuality(ctx, user, request.quality);
+    });
+
+    // Обработка отмены генерации видео
+    this.bot.action('video_cancel', async (ctx) => {
+      await ctx.answerCbQuery();
+
+      const request = this.pendingVideoRequests.get(ctx.from.id);
+      if (request) {
+        this.pendingVideoRequests.delete(ctx.from.id);
+      }
+
+      try {
+        await ctx.editMessageText('Генерация видео отменена.');
+      } catch (error) {
+        this.logger.warn('Не удалось отредактировать сообщение при отмене', error);
+        await ctx.reply('Генерация видео отменена.');
+      }
     });
 
     this.bot.catch((err, ctx) => {
