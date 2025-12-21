@@ -56,6 +56,7 @@ export class TelegramService {
       duration?: number;
       quality?: 'lite' | 'pro';
       confirmationMessageId?: number;
+      skipOptimization?: boolean; // пропустить оптимизацию промпта
     }
   >();
   // ссылка на основной бот компании, где проходит первоначальная регистрация
@@ -228,7 +229,8 @@ export class TelegramService {
 
     const qualityText = quality === 'pro' ? 'Про' : 'Лайт';
     const cost = this.calculateVideoCost(quality, finalDuration);
-    const message = `Будет сгенерировано видео "${prompt}" со следующими параметрами:\nКачество - ${qualityText}\nДлительность - ${finalDuration} секунд\n\nБудет списано: ${cost} токенов`;
+    const optimizationText = request.skipOptimization ? 'без оптимизации промпта ' : '';
+    const message = `Будет сгенерировано видео ${optimizationText}"${prompt}" со следующими параметрами:\nКачество - ${qualityText}\nДлительность - ${finalDuration} секунд\n\nБудет списано: ${cost} токенов`;
 
     try {
       await ctx.telegram.editMessageText(
@@ -295,8 +297,12 @@ export class TelegramService {
     // Удаляем запрос из временного хранилища
     this.pendingVideoRequests.delete(ctx.from.id);
 
-    // Отправляем сообщение об оптимизации запроса
-    const optimizeMsg = await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
+    const { skipOptimization } = request;
+
+    // Отправляем сообщение об оптимизации запроса (если не пропущена оптимизация)
+    const optimizeMsg = skipOptimization
+      ? await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'СОЗДАЮ ВИДЕО ...')
+      : await this.sendAnimation(ctx, 'thinking_pen_a.mp4', 'ОПТИМИЗИРУЮ ЗАПРОС ...');
 
     try {
       // Генерируем видео с указанным качеством и длительностью
@@ -304,6 +310,7 @@ export class TelegramService {
         ? await this.video.generateVideoFromImage(imageBuffer, prompt, {
             quality,
             duration,
+            skipOptimization,
             onProgress: (status, attempt, maxAttempts) => {
               if (attempt === 0) {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
@@ -315,6 +322,7 @@ export class TelegramService {
         : await this.video.generateVideo(prompt, {
             quality,
             duration,
+            skipOptimization,
             onProgress: (status, attempt, maxAttempts) => {
               if (attempt === 0) {
                 this.updateVideoProgress(ctx, optimizeMsg.message_id, 'СОЗДАЮ ВИДЕО', attempt, maxAttempts);
@@ -622,6 +630,47 @@ export class TelegramService {
       const answer = await this.openai.chat(q, ctx.message.from.id);
       await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
+      // Обработка команды /vid promt [длительность] [качество] [описание] (без оптимизации)
+      if (answer.text.startsWith('/vid promt ') || answer.text.startsWith('/vid prompt ')) {
+        const parts = answer.text.replace('/vid promt ', '').replace('/vid prompt ', '').trim().split(/\s+/);
+        if (parts.length < 2) {
+          await ctx.reply('Использование: /vid promt [длительность] [качество] [описание]\nПример: /vid promt 15 lite Кот играет');
+          return;
+        }
+
+        const durationStr = parts[0];
+        const qualityStr = parts[1].toLowerCase();
+        const prompt = parts.slice(2).join(' ');
+
+        const duration = parseInt(durationStr, 10);
+        if (isNaN(duration) || ![5, 10, 15].includes(duration)) {
+          await ctx.reply('Длительность должна быть 5, 10 или 15 секунд');
+          return;
+        }
+
+        if (qualityStr !== 'lite' && qualityStr !== 'pro') {
+          await ctx.reply('Качество должно быть "lite" или "pro"');
+          return;
+        }
+
+        if (!prompt) {
+          await ctx.reply('Пожалуйста, укажите описание для генерации видео');
+          return;
+        }
+
+        // Сохраняем запрос и показываем сообщение для последующего редактирования
+        const sentMessage = await ctx.reply('Загрузка...');
+        this.pendingVideoRequests.set(ctx.from.id, {
+          prompt,
+          messageId: sentMessage.message_id,
+          duration,
+          quality: qualityStr as 'lite' | 'pro',
+          skipOptimization: true,
+        });
+        await this.showVideoConfirmation(ctx, qualityStr as 'lite' | 'pro', sentMessage.message_id, duration);
+        return;
+      }
+
       // Обработка команды /vid [длительность] [качество] [описание]
       if (answer.text.startsWith('/vid ')) {
         const parts = answer.text.replace('/vid ', '').trim().split(/\s+/);
@@ -761,6 +810,47 @@ export class TelegramService {
           !q.startsWith('/в')
         ) {
           return next();
+        }
+
+        // Обработка команды /vid promt [длительность] [качество] [описание] (без оптимизации)
+        if (q.startsWith('/vid promt ') || q.startsWith('/vid prompt ')) {
+          const parts = q.replace('/vid promt ', '').replace('/vid prompt ', '').trim().split(/\s+/);
+          if (parts.length < 2) {
+            await ctx.reply('Использование: /vid promt [длительность] [качество] [описание]\nПример: /vid promt 15 lite Кот играет');
+            return;
+          }
+
+          const durationStr = parts[0];
+          const qualityStr = parts[1].toLowerCase();
+          const prompt = parts.slice(2).join(' ');
+
+          const duration = parseInt(durationStr, 10);
+          if (isNaN(duration) || ![5, 10, 15].includes(duration)) {
+            await ctx.reply('Длительность должна быть 5, 10 или 15 секунд');
+            return;
+          }
+
+          if (qualityStr !== 'lite' && qualityStr !== 'pro') {
+            await ctx.reply('Качество должно быть "lite" или "pro"');
+            return;
+          }
+
+          if (!prompt) {
+            await ctx.reply('Пожалуйста, укажите описание для генерации видео');
+            return;
+          }
+
+          // Сохраняем запрос и показываем сообщение для последующего редактирования
+          const sentMessage = await ctx.reply('Загрузка...');
+          this.pendingVideoRequests.set(ctx.from.id, {
+            prompt,
+            messageId: sentMessage.message_id,
+            duration,
+            quality: qualityStr as 'lite' | 'pro',
+            skipOptimization: true,
+          });
+          await this.showVideoConfirmation(ctx, qualityStr as 'lite' | 'pro', sentMessage.message_id, duration);
+          return;
         }
 
         // Обработка команды /vid [длительность] [качество] [описание]
@@ -912,6 +1002,47 @@ export class TelegramService {
             // Удаляем сообщение "ДУМАЮ" только после успешного получения ответа
             await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
+            // Обработка команды /vid promt [длительность] [качество] [описание] (без оптимизации)
+            if (answer.text.startsWith('/vid promt ') || answer.text.startsWith('/vid prompt ')) {
+              const parts = answer.text.replace('/vid promt ', '').replace('/vid prompt ', '').trim().split(/\s+/);
+              if (parts.length < 2) {
+                await ctx.reply('Использование: /vid promt [длительность] [качество] [описание]\nПример: /vid promt 15 lite Кот играет');
+                return;
+              }
+
+              const durationStr = parts[0];
+              const qualityStr = parts[1].toLowerCase();
+              const prompt = parts.slice(2).join(' ');
+
+              const duration = parseInt(durationStr, 10);
+              if (isNaN(duration) || ![5, 10, 15].includes(duration)) {
+                await ctx.reply('Длительность должна быть 5, 10 или 15 секунд');
+                return;
+              }
+
+              if (qualityStr !== 'lite' && qualityStr !== 'pro') {
+                await ctx.reply('Качество должно быть "lite" или "pro"');
+                return;
+              }
+
+              if (!prompt) {
+                await ctx.reply('Пожалуйста, укажите описание для генерации видео');
+                return;
+              }
+
+              // Сохраняем запрос и показываем сообщение для последующего редактирования
+              const sentMessage = await ctx.reply('Загрузка...');
+              this.pendingVideoRequests.set(ctx.from.id, {
+                prompt,
+                messageId: sentMessage.message_id,
+                duration,
+                quality: qualityStr as 'lite' | 'pro',
+                skipOptimization: true,
+              });
+              await this.showVideoConfirmation(ctx, qualityStr as 'lite' | 'pro', sentMessage.message_id, duration);
+              return;
+            }
+
             // Обработка команды /vid [длительность] [качество] [описание]
             if (answer.text.startsWith('/vid ')) {
               const parts = answer.text.replace('/vid ', '').trim().split(/\s+/);
@@ -940,10 +1071,8 @@ export class TelegramService {
                 return;
               }
 
-              // Сохраняем запрос и сразу показываем подтверждение
-              const sentMessage = await ctx.reply(
-                `Параметры генерации:\nКачество: ${qualityStr === 'pro' ? 'Про' : 'Лайт'}\nДлительность: ${duration} секунд\nПромпт: "${prompt}"`,
-              );
+              // Сохраняем запрос и показываем сообщение для последующего редактирования
+              const sentMessage = await ctx.reply('Загрузка...');
               this.pendingVideoRequests.set(ctx.from.id, {
                 prompt,
                 messageId: sentMessage.message_id,
@@ -1068,6 +1197,45 @@ export class TelegramService {
           } else {
             await ctx.reply('Не удалось сгенерировать изображение');
           }
+        } else if (caption.startsWith('/vid promt ') || caption.startsWith('/vid prompt ')) {
+          // Обработка команды /vid promt [длительность] [качество] [описание] (без оптимизации)
+          const parts = caption.replace('/vid promt ', '').replace('/vid prompt ', '').trim().split(/\s+/);
+          if (parts.length < 2) {
+            await ctx.reply('Использование: /vid promt [длительность] [качество] [описание]\nПример: /vid promt 15 lite Кот играет');
+            return;
+          }
+
+          const durationStr = parts[0];
+          const qualityStr = parts[1].toLowerCase();
+          const prompt = parts.slice(2).join(' ');
+
+          const duration = parseInt(durationStr, 10);
+          if (isNaN(duration) || ![5, 10, 15].includes(duration)) {
+            await ctx.reply('Длительность должна быть 5, 10 или 15 секунд');
+            return;
+          }
+
+          if (qualityStr !== 'lite' && qualityStr !== 'pro') {
+            await ctx.reply('Качество должно быть "lite" или "pro"');
+            return;
+          }
+
+          if (!prompt) {
+            await ctx.reply('Пожалуйста, укажите описание для генерации видео');
+            return;
+          }
+
+          // Сохраняем запрос и показываем сообщение для последующего редактирования
+          const sentMessage = await ctx.reply('Загрузка...');
+          this.pendingVideoRequests.set(ctx.from.id, {
+            prompt,
+            imageBuffer: buffer,
+            messageId: sentMessage.message_id,
+            duration,
+            quality: qualityStr as 'lite' | 'pro',
+            skipOptimization: true,
+          });
+          await this.showVideoConfirmation(ctx, qualityStr as 'lite' | 'pro', sentMessage.message_id, duration);
         } else if (caption.startsWith('/vid ')) {
           // Обработка команды /vid [длительность] [качество] [описание]
           const parts = caption.replace('/vid ', '').trim().split(/\s+/);

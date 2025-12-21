@@ -32,6 +32,7 @@ export interface VideoGenerationOptions {
   provider?: VideoProvider;
   quality?: 'lite' | 'pro';
   duration?: number; // длительность видео в секундах
+  skipOptimization?: boolean; // пропустить оптимизацию промпта
 }
 
 @Injectable()
@@ -126,9 +127,11 @@ export class VideoService {
     try {
       this.logger.log(`Начинаю генерацию видео через OpenAI для промпта: ${prompt}`);
 
-      // Оптимизируем промт через ассистента
-      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
-      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+      // Оптимизируем промт через ассистента (если не пропущена оптимизация)
+      const optimizedPrompt = options?.skipOptimization
+        ? prompt
+        : await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую ${options?.skipOptimization ? 'исходный' : 'оптимизированный'} промт: ${optimizedPrompt}`);
 
       // Определяем параметры в зависимости от качества
       const quality = options?.quality || 'lite';
@@ -198,9 +201,11 @@ export class VideoService {
     try {
       this.logger.log(`Начинаю генерацию видео через OpenAI по изображению для промпта: ${prompt}`);
 
-      // Оптимизируем промт через ассистента
-      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
-      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+      // Оптимизируем промт через ассистента (если не пропущена оптимизация)
+      const optimizedPrompt = options?.skipOptimization
+        ? prompt
+        : await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую ${options?.skipOptimization ? 'исходный' : 'оптимизированный'} промт: ${optimizedPrompt}`);
 
       // Определяем параметры в зависимости от качества
       const quality = options?.quality || 'lite';
@@ -461,9 +466,11 @@ export class VideoService {
 
       this.logger.log(`Начинаю генерацию видео по изображению через Kling для промпта: ${prompt}`);
 
-      // Оптимизируем промт через ассистента
-      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
-      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+      // Оптимизируем промт через ассистента (если не пропущена оптимизация)
+      const optimizedPrompt = options?.skipOptimization
+        ? prompt
+        : await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую ${options?.skipOptimization ? 'исходный' : 'оптимизированный'} промт: ${optimizedPrompt}`);
 
       // Конвертируем изображение в base64
       const imageBase64 = this.convertImageToBase64(imageBuffer);
@@ -570,9 +577,11 @@ export class VideoService {
 
       this.logger.log(`Начинаю генерацию видео через Kling для промпта: ${prompt}`);
 
-      // Оптимизируем промт через ассистента
-      const optimizedPrompt = await this.openaiService.optimizeVideoPrompt(prompt);
-      this.logger.log(`Использую оптимизированный промт: ${optimizedPrompt}`);
+      // Оптимизируем промт через ассистента (если не пропущена оптимизация)
+      const optimizedPrompt = options?.skipOptimization
+        ? prompt
+        : await this.openaiService.optimizeVideoPrompt(prompt);
+      this.logger.log(`Использую ${options?.skipOptimization ? 'исходный' : 'оптимизированный'} промт: ${optimizedPrompt}`);
 
       // Генерируем JWT токен для авторизации
       const jwtToken = this.generateJWTToken();
