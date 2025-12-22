@@ -1263,7 +1263,7 @@ export class TelegramService {
         `• Пример: <code>/в кошка играет с мячиком</code>\n` +
         `• Стоимость Лайт: <b>4с - ${this.calculateVideoCost('lite', 4)}, 8с - ${this.calculateVideoCost('lite', 8)}, 12с - ${this.calculateVideoCost('lite', 12)} токенов</b>\n` +
         `• Стоимость Про: <b>4с - ${this.calculateVideoCost('pro', 4)}, 8с - ${this.calculateVideoCost('pro', 8)}, 12с - ${this.calculateVideoCost('pro', 12)} токенов</b>\n` +
-        `• Отключить оптимизацию промта: добавить слово <b>"Promt"</b> после /vid. Например: <code>/vidPromt8Lite</code>, <code>/vidPromt4Pro</code>\n` +
+        `• Отключить оптимизацию промта: добавить слово <b>"Promt"</b> после <code>/vid</code>. Например: <code>/vidPromt8Lite</code>, <code>/vidPromt4Pro</code>\n` +
         `• Примеры быстрых команд: <code>/vid8Lite</code>, <code>/vidPromt4Pro</code>\n\n` +
         `🎵 <b>Работа с аудио:</b>\n` +
         `• Распознавание речи: <b>${this.COST_VOICE_RECOGNITION} токен</b>\n` +
