@@ -26,8 +26,8 @@ export class TelegramService {
   // Стоимость операций в токенах
   private readonly COST_TEXT = 1;
   private readonly COST_IMAGE = 60;
-  private readonly COST_VIDEO_LITE_BASE = 220; // базовая стоимость генерации видео Лайт (за 5 секунд)
-  private readonly COST_VIDEO_PRO_BASE = 1000; // базовая стоимость генерации видео Про (за 5 секунд)
+  private readonly COST_VIDEO_LITE_BASE = 220; // базовая стоимость генерации видео Лайт (за 4 секунды)
+  private readonly COST_VIDEO_PRO_BASE = 1000; // базовая стоимость генерации видео Про (за 4 секунды)
   private readonly COST_VOICE_RECOGNITION = 1;
   private readonly COST_VOICE_REPLY_EXTRA = 3; // после распознавания
   // обработка документа
@@ -36,15 +36,15 @@ export class TelegramService {
   // Расчет стоимости видео в зависимости от качества и длительности
   private calculateVideoCost(quality: 'lite' | 'pro', duration: number): number {
     if (quality === 'lite') {
-      // Лайт: 5 сек - 220, 10 сек - 440, 15 сек - 660
-      return this.COST_VIDEO_LITE_BASE * (duration / 5);
+      // Лайт: 4 сек - 220, 8 сек - 440, 12 сек - 660
+      return this.COST_VIDEO_LITE_BASE * (duration / 4);
     } else {
-      // Про: 5 сек - 1000, 10 сек - 2000, 15 сек - 3000
-      return this.COST_VIDEO_PRO_BASE * (duration / 5);
+      // Про: 4 сек - 1000, 8 сек - 2000, 12 сек - 3000
+      return this.COST_VIDEO_PRO_BASE * (duration / 4);
     }
   }
 
-  // Парсинг команды в формате camelCase: /vid15Lite или /vidPromt10Pro
+  // Парсинг команды в формате camelCase: /vid12Lite или /vidPromt8Pro
   private parseVidCommand(command: string): { duration?: number; quality?: 'lite' | 'pro'; skipOptimization?: boolean; prompt?: string } | null {
     // Убираем слэш в начале
     const cmd = command.startsWith('/') ? command.slice(1) : command;
@@ -54,7 +54,8 @@ export class TelegramService {
     if (promtMatch) {
       const duration = parseInt(promtMatch[1], 10);
       const quality = promtMatch[2].toLowerCase() as 'lite' | 'pro';
-      if ([5, 10, 15].includes(duration) && (quality === 'lite' || quality === 'pro')) {
+      // OpenAI API поддерживает только значения 4, 8, 12
+      if ([4, 8, 12].includes(duration) && (quality === 'lite' || quality === 'pro')) {
         return { duration, quality, skipOptimization: true };
       }
     }
@@ -64,7 +65,8 @@ export class TelegramService {
     if (vidMatch) {
       const duration = parseInt(vidMatch[1], 10);
       const quality = vidMatch[2].toLowerCase() as 'lite' | 'pro';
-      if ([5, 10, 15].includes(duration) && (quality === 'lite' || quality === 'pro')) {
+      // OpenAI API поддерживает только значения 4, 8, 12
+      if ([4, 8, 12].includes(duration) && (quality === 'lite' || quality === 'pro')) {
         return { duration, quality, skipOptimization: false };
       }
     }
@@ -186,16 +188,16 @@ export class TelegramService {
       message,
       Markup.inlineKeyboard([
         [
-          Markup.button.callback(`Лайт 5с - ${this.calculateVideoCost('lite', 5)}`, 'video_params_lite_5'),
-          Markup.button.callback(`Про 5с - ${this.calculateVideoCost('pro', 5)}`, 'video_params_pro_5'),
+          Markup.button.callback(`Лайт 4с - ${this.calculateVideoCost('lite', 4)}`, 'video_params_lite_4'),
+          Markup.button.callback(`Про 4с - ${this.calculateVideoCost('pro', 4)}`, 'video_params_pro_4'),
         ],
         [
-          Markup.button.callback(`Лайт 10с - ${this.calculateVideoCost('lite', 10)}`, 'video_params_lite_10'),
-          Markup.button.callback(`Про 10с - ${this.calculateVideoCost('pro', 10)}`, 'video_params_pro_10'),
+          Markup.button.callback(`Лайт 8с - ${this.calculateVideoCost('lite', 8)}`, 'video_params_lite_8'),
+          Markup.button.callback(`Про 8с - ${this.calculateVideoCost('pro', 8)}`, 'video_params_pro_8'),
         ],
         [
-          Markup.button.callback(`Лайт 15с - ${this.calculateVideoCost('lite', 15)}`, 'video_params_lite_15'),
-          Markup.button.callback(`Про 15с - ${this.calculateVideoCost('pro', 15)}`, 'video_params_pro_15'),
+          Markup.button.callback(`Лайт 12с - ${this.calculateVideoCost('lite', 12)}`, 'video_params_lite_12'),
+          Markup.button.callback(`Про 12с - ${this.calculateVideoCost('pro', 12)}`, 'video_params_pro_12'),
         ],
       ]),
     );
@@ -658,7 +660,7 @@ export class TelegramService {
       const answer = await this.openai.chat(q, ctx.message.from.id);
       await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-      // Обработка команды в формате camelCase: /vid15Lite или /vidPromt10Pro
+      // Обработка команды в формате camelCase: /vid12Lite или /vidPromt8Pro
       if (answer.text.startsWith('/vid') && !answer.text.startsWith('/vid ')) {
         // Извлекаем команду до первого пробела (если есть)
         const spaceIndex = answer.text.indexOf(' ');
@@ -686,29 +688,29 @@ export class TelegramService {
         }
       }
 
-      // Проверяем команды с длительностью /video5, /video10, /video15
+      // Проверяем команды с длительностью /video4, /video8, /video12
       let duration: number | undefined;
       let videoCommand = answer.text;
-      if (answer.text.startsWith('/video5')) {
-        duration = 5;
-        videoCommand = answer.text.replace('/video5', '').trim();
-      } else if (answer.text.startsWith('/video10')) {
-        duration = 10;
-        videoCommand = answer.text.replace('/video10', '').trim();
-      } else if (answer.text.startsWith('/video15')) {
-        duration = 15;
-        videoCommand = answer.text.replace('/video15', '').trim();
+      if (answer.text.startsWith('/video4')) {
+        duration = 4;
+        videoCommand = answer.text.replace('/video4', '').trim();
+      } else if (answer.text.startsWith('/video8')) {
+        duration = 8;
+        videoCommand = answer.text.replace('/video8', '').trim();
+      } else if (answer.text.startsWith('/video12')) {
+        duration = 12;
+        videoCommand = answer.text.replace('/video12', '').trim();
       } else if (answer.text.startsWith('/video')) {
         videoCommand = answer.text.replace('/video', '').trim();
-      } else if (answer.text.startsWith('/в5')) {
-        duration = 5;
-        videoCommand = answer.text.replace('/в5', '').trim();
-      } else if (answer.text.startsWith('/в10')) {
-        duration = 10;
-        videoCommand = answer.text.replace('/в10', '').trim();
-      } else if (answer.text.startsWith('/в15')) {
-        duration = 15;
-        videoCommand = answer.text.replace('/в15', '').trim();
+      } else if (answer.text.startsWith('/в4')) {
+        duration = 4;
+        videoCommand = answer.text.replace('/в4', '').trim();
+      } else if (answer.text.startsWith('/в8')) {
+        duration = 8;
+        videoCommand = answer.text.replace('/в8', '').trim();
+      } else if (answer.text.startsWith('/в12')) {
+        duration = 12;
+        videoCommand = answer.text.replace('/в12', '').trim();
       } else if (answer.text.startsWith('/в')) {
         videoCommand = answer.text.replace('/в', '').trim();
       }
@@ -787,7 +789,7 @@ export class TelegramService {
           return next();
         }
 
-        // Обработка команды в формате camelCase: /vid15Lite или /vidPromt10Pro
+        // Обработка команды в формате camelCase: /vid12Lite или /vidPromt8Pro
         if (q.startsWith('/vid') && !q.startsWith('/vid ')) {
           // Извлекаем команду до первого пробела (если есть)
           const spaceIndex = q.indexOf(' ');
@@ -815,27 +817,27 @@ export class TelegramService {
           }
         }
 
-        // Проверяем команды с длительностью /в5, /в10, /в15
+        // Проверяем команды с длительностью /в4, /в8, /в12
         let duration: number | undefined;
         let prompt: string;
-        if (q.startsWith('/в5')) {
-          duration = 5;
-          prompt = q.replace('/в5', '').trim();
-        } else if (q.startsWith('/в10')) {
-          duration = 10;
-          prompt = q.replace('/в10', '').trim();
-        } else if (q.startsWith('/в15')) {
-          duration = 15;
-          prompt = q.replace('/в15', '').trim();
-        } else if (q.startsWith('/video5')) {
-          duration = 5;
-          prompt = q.replace('/video5', '').trim();
-        } else if (q.startsWith('/video10')) {
-          duration = 10;
-          prompt = q.replace('/video10', '').trim();
-        } else if (q.startsWith('/video15')) {
-          duration = 15;
-          prompt = q.replace('/video15', '').trim();
+        if (q.startsWith('/в4')) {
+          duration = 4;
+          prompt = q.replace('/в4', '').trim();
+        } else if (q.startsWith('/в8')) {
+          duration = 8;
+          prompt = q.replace('/в8', '').trim();
+        } else if (q.startsWith('/в12')) {
+          duration = 12;
+          prompt = q.replace('/в12', '').trim();
+        } else if (q.startsWith('/video4')) {
+          duration = 4;
+          prompt = q.replace('/video4', '').trim();
+        } else if (q.startsWith('/video8')) {
+          duration = 8;
+          prompt = q.replace('/video8', '').trim();
+        } else if (q.startsWith('/video12')) {
+          duration = 12;
+          prompt = q.replace('/video12', '').trim();
         } else if (q.startsWith('/video') || q.startsWith('/в')) {
           prompt = q.replace('/video', '').replace('/в', '').trim();
         } else {
@@ -923,7 +925,7 @@ export class TelegramService {
             // Удаляем сообщение "ДУМАЮ" только после успешного получения ответа
             await ctx.telegram.deleteMessage(ctx.chat.id, thinkingMsg.message_id);
 
-            // Обработка команды в формате camelCase: /vid15Lite или /vidPromt10Pro
+            // Обработка команды в формате camelCase: /vid12Lite или /vidPromt8Pro
             if (answer.text.startsWith('/vid') && !answer.text.startsWith('/vid ')) {
               // Извлекаем команду до первого пробела (если есть)
               const spaceIndex = answer.text.indexOf(' ');
@@ -954,26 +956,26 @@ export class TelegramService {
             // Проверяем команды с длительностью
             let duration: number | undefined;
             let videoCommand = answer.text;
-            if (answer.text.startsWith('/video5')) {
-              duration = 5;
-              videoCommand = answer.text.replace('/video5', '').trim();
-            } else if (answer.text.startsWith('/video10')) {
-              duration = 10;
-              videoCommand = answer.text.replace('/video10', '').trim();
-            } else if (answer.text.startsWith('/video15')) {
-              duration = 15;
-              videoCommand = answer.text.replace('/video15', '').trim();
+            if (answer.text.startsWith('/video4')) {
+              duration = 4;
+              videoCommand = answer.text.replace('/video4', '').trim();
+            } else if (answer.text.startsWith('/video8')) {
+              duration = 8;
+              videoCommand = answer.text.replace('/video8', '').trim();
+            } else if (answer.text.startsWith('/video12')) {
+              duration = 12;
+              videoCommand = answer.text.replace('/video12', '').trim();
             } else if (answer.text.startsWith('/video')) {
               videoCommand = answer.text.replace('/video', '').trim();
-            } else if (answer.text.startsWith('/в5')) {
-              duration = 5;
-              videoCommand = answer.text.replace('/в5', '').trim();
-            } else if (answer.text.startsWith('/в10')) {
-              duration = 10;
-              videoCommand = answer.text.replace('/в10', '').trim();
-            } else if (answer.text.startsWith('/в15')) {
-              duration = 15;
-              videoCommand = answer.text.replace('/в15', '').trim();
+            } else if (answer.text.startsWith('/в4')) {
+              duration = 4;
+              videoCommand = answer.text.replace('/в4', '').trim();
+            } else if (answer.text.startsWith('/в8')) {
+              duration = 8;
+              videoCommand = answer.text.replace('/в8', '').trim();
+            } else if (answer.text.startsWith('/в12')) {
+              duration = 12;
+              videoCommand = answer.text.replace('/в12', '').trim();
             } else if (answer.text.startsWith('/в')) {
               videoCommand = answer.text.replace('/в', '').trim();
             }
@@ -1066,7 +1068,7 @@ export class TelegramService {
             await ctx.reply('Не удалось сгенерировать изображение');
           }
         } else if (caption.startsWith('/vid') && !caption.startsWith('/vid ')) {
-          // Обработка команды в формате camelCase: /vid15Lite или /vidPromt10Pro
+          // Обработка команды в формате camelCase: /vid12Lite или /vidPromt8Pro
           // Извлекаем команду до первого пробела (если есть)
           const spaceIndex = caption.indexOf(' ');
           const commandPart = spaceIndex > 0 ? caption.substring(0, spaceIndex) : caption;
@@ -1095,24 +1097,24 @@ export class TelegramService {
           // Проверяем команды с длительностью
           let duration: number | undefined;
           let prompt: string;
-          if (caption.startsWith('/в5')) {
-            duration = 5;
-            prompt = caption.replace('/в5', '').trim();
-          } else if (caption.startsWith('/в10')) {
-            duration = 10;
-            prompt = caption.replace('/в10', '').trim();
-          } else if (caption.startsWith('/в15')) {
-            duration = 15;
-            prompt = caption.replace('/в15', '').trim();
-          } else if (caption.startsWith('/video5')) {
-            duration = 5;
-            prompt = caption.replace('/video5', '').trim();
-          } else if (caption.startsWith('/video10')) {
-            duration = 10;
-            prompt = caption.replace('/video10', '').trim();
-          } else if (caption.startsWith('/video15')) {
-            duration = 15;
-            prompt = caption.replace('/video15', '').trim();
+          if (caption.startsWith('/в4')) {
+            duration = 4;
+            prompt = caption.replace('/в4', '').trim();
+          } else if (caption.startsWith('/в8')) {
+            duration = 8;
+            prompt = caption.replace('/в8', '').trim();
+          } else if (caption.startsWith('/в12')) {
+            duration = 12;
+            prompt = caption.replace('/в12', '').trim();
+          } else if (caption.startsWith('/video4')) {
+            duration = 4;
+            prompt = caption.replace('/video4', '').trim();
+          } else if (caption.startsWith('/video8')) {
+            duration = 8;
+            prompt = caption.replace('/video8', '').trim();
+          } else if (caption.startsWith('/video12')) {
+            duration = 12;
+            prompt = caption.replace('/video12', '').trim();
           } else {
             prompt = caption.replace('/video', '').replace('/в', '').trim();
           }
@@ -1256,11 +1258,13 @@ export class TelegramService {
         `• Команда: <code>/и [описание]</code>\n` +
         `• Пример: <code>/и красивая кошка</code>\n` +
         `• Стоимость: <b>${this.COST_IMAGE} токенов</b>\n\n` +
-        `🎬 <b>Генерация видео:</b>\n` +
+        `🎬 <b>Генерация видео:</b>\n\n` +
         `• Команда: <code>/в [описание]</code>\n` +
         `• Пример: <code>/в кошка играет с мячиком</code>\n` +
-        `• Стоимость Лайт: <b>5с - ${this.calculateVideoCost('lite', 5)}, 10с - ${this.calculateVideoCost('lite', 10)}, 15с - ${this.calculateVideoCost('lite', 15)} токенов</b>\n` +
-        `• Стоимость Про: <b>5с - ${this.calculateVideoCost('pro', 5)}, 10с - ${this.calculateVideoCost('pro', 10)}, 15с - ${this.calculateVideoCost('pro', 15)} токенов</b>\n\n` +
+        `• Стоимость Лайт: <b>4с - ${this.calculateVideoCost('lite', 4)}, 8с - ${this.calculateVideoCost('lite', 8)}, 12с - ${this.calculateVideoCost('lite', 12)} токенов</b>\n` +
+        `• Стоимость Про: <b>4с - ${this.calculateVideoCost('pro', 4)}, 8с - ${this.calculateVideoCost('pro', 8)}, 12с - ${this.calculateVideoCost('pro', 12)} токенов</b>\n` +
+        `• Отключить оптимизацию промта: добавить слово <b>"Promt"</b> после /vid. Например: <code>/vidPromt8Lite</code>, <code>/vidPromt4Pro</code>\n` +
+        `• Примеры быстрых команд: <code>/vid8Lite</code>, <code>/vidPromt4Pro</code>\n\n` +
         `🎵 <b>Работа с аудио:</b>\n` +
         `• Распознавание речи: <b>${this.COST_VOICE_RECOGNITION} токен</b>\n` +
         `• Генерация ответа: <b>${this.COST_VOICE_REPLY_EXTRA} токена</b>\n\n` +
@@ -1523,7 +1527,7 @@ export class TelegramService {
     });
 
     // Обработка выбора параметров видео (6 кнопок: качество + длительность)
-    this.bot.action(/^video_params_(lite|pro)_(5|10|15)$/, async (ctx) => {
+    this.bot.action(/^video_params_(lite|pro)_(4|8|12)$/, async (ctx) => {
       await ctx.answerCbQuery();
       const user = await this.findOrCreateProfile(ctx.from, undefined, ctx);
       if (!user) return;

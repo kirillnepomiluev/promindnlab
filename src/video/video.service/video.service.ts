@@ -79,6 +79,27 @@ export class VideoService {
   // ==================== Helper Methods ====================
 
   /**
+   * Преобразует duration для OpenAI API
+   * OpenAI API поддерживает только значения 4, 8, 12
+   * Преобразует 5->4, 10->8, 15->12
+   * @param duration - исходная длительность в секундах
+   * @returns преобразованная длительность для OpenAI API
+   */
+  private normalizeDurationForOpenAI(duration?: number): number {
+    if (!duration) return 4;
+    // OpenAI API поддерживает только 4, 8, 12
+    if (duration === 5) return 4;
+    if (duration === 10) return 8;
+    if (duration === 15) return 12;
+    // Если значение уже поддерживается, возвращаем как есть
+    if ([4, 8, 12].includes(duration)) return duration;
+    // Для других значений возвращаем ближайшее поддерживаемое
+    if (duration < 6) return 4;
+    if (duration < 11) return 8;
+    return 12;
+  }
+
+  /**
    * Изменяет размер изображения до указанных ширины и высоты
    * @param image - Buffer изображения
    * @param width - целевая ширина
@@ -143,7 +164,8 @@ export class VideoService {
       formData.append('model', model);
       formData.append('prompt', optimizedPrompt);
       formData.append('size', size);
-      formData.append('seconds', String(options?.duration ?? 4));
+      const normalizedDuration = this.normalizeDurationForOpenAI(options?.duration);
+      formData.append('seconds', String(normalizedDuration));
 
       const response = await fetch(`${this.openai.baseURL}/videos`, {
         method: 'POST',
@@ -229,7 +251,8 @@ export class VideoService {
         contentType: 'image/png',
       });
       formData.append('size', size);
-      formData.append('seconds', String(options?.duration ?? 4));
+      const normalizedDuration = this.normalizeDurationForOpenAI(options?.duration);
+      formData.append('seconds', String(normalizedDuration));
 
       const response = await fetch(`${this.openai.baseURL}/videos`, {
         method: 'POST',
@@ -344,11 +367,23 @@ export class VideoService {
             videoUrl: videoUrl,
           };
         } else if (status === 'failed') {
+          const errorCode = data.error?.code;
           const errorMsg = data.error?.message || 'Генерация видео завершилась с ошибкой';
-          this.logger.error(`Генерация OpenAI видео завершилась с ошибкой: ${errorMsg}`);
+          
+          // Специальная обработка ошибки модерации
+          let userFriendlyError: string;
+          if (errorCode === 'moderation_blocked') {
+            userFriendlyError = 'Запрос был заблокирован системой модерации. Пожалуйста, измените описание видео, избегая упоминания алкоголя, оружия или других запрещенных тем.';
+          } else if (errorMsg.includes('moderation') || errorMsg.includes('blocked')) {
+            userFriendlyError = 'Запрос был заблокирован системой модерации. Пожалуйста, измените описание видео.';
+          } else {
+            userFriendlyError = errorMsg;
+          }
+          
+          this.logger.error(`Генерация OpenAI видео завершилась с ошибкой: ${errorMsg} (код: ${errorCode})`);
           return {
             success: false,
-            error: errorMsg,
+            error: userFriendlyError,
           };
         } else if (status === 'queued' || status === 'processing' || status === 'in_progress') {
           this.logger.debug(`Задача OpenAI все еще обрабатывается, статус: ${status}, прогресс: ${progress}%`);
