@@ -115,8 +115,8 @@ export class OpenAiService {
    */
   private async executeWithRetry<T>(
     operation: (client: OpenAI) => Promise<T>,
-    maxRetries: number = 5,
-    delayMs: number = 2000
+    maxRetries: number = 3,
+    delayMs: number = 1000
   ): Promise<T> {
     let lastError: any;
     
@@ -312,9 +312,9 @@ export class OpenAiService {
 
   // Основной текстовый чат с ассистентом
   async chat(content: string, userId: number): Promise<OpenAiAnswer> {
-    // Проверяем и очищаем устаревшие треды
-    await this.cleanupExpiredThreads();
-    
+    // Очистка устаревших тредов в фоне, чтобы не блокировать запрос и не нагружать прокси перед createAndPoll
+    void this.cleanupExpiredThreads().catch((err) => this.logger.warn('Очистка тредов завершилась с ошибкой', err));
+
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -477,9 +477,8 @@ export class OpenAiService {
     userId: number,
     image: Buffer,
   ): Promise<OpenAiAnswer> {
-    // Проверяем и очищаем устаревшие треды
-    await this.cleanupExpiredThreads();
-    
+    void this.cleanupExpiredThreads().catch((err) => this.logger.warn('Очистка тредов завершилась с ошибкой', err));
+
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -669,10 +668,9 @@ export class OpenAiService {
   ): Promise<OpenAiAnswer> {
     // Нормализуем имя файла
     const normalizedFilename = this.normalizeFilename(filename);
-    
-    // Проверяем и очищаем устаревшие треды
-    await this.cleanupExpiredThreads();
-    
+
+    void this.cleanupExpiredThreads().catch((err) => this.logger.warn('Очистка тредов завершилась с ошибкой', err));
+
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
