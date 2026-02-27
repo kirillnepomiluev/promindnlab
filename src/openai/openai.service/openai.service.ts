@@ -326,6 +326,30 @@ export class OpenAiService implements OnModuleInit {
   // ID ассистента для оптимизации промтов видео
   private readonly VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID = 'asst_qtXWMEt5EWtSUXTgPEQDqYVM';
 
+  /**
+   * Запускает ассистента через streaming (один длинный ответ вместо polling).
+   * Возвращает ответ или бросает ошибку при status !== 'completed'.
+   */
+  private async runAssistantStream(
+    client: OpenAI,
+    threadId: string,
+    assistantId: string,
+  ): Promise<OpenAiAnswer> {
+    const stream = client.beta.threads.runs.stream(threadId, {
+      assistant_id: assistantId,
+    });
+    const run = await (stream as { finalRun: () => Promise<{ status: string; thread_id: string; last_error?: { code?: string; message?: string } }> }).finalRun();
+    if (run.status === 'completed') {
+      const messages = await client.beta.threads.messages.list(run.thread_id);
+      const assistantMessage = messages.data[0];
+      return await this.buildAnswer(assistantMessage);
+    }
+    const errInfo = run.last_error;
+    const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
+    this.logger.warn(`Run завершился со статусом: ${run.status}${detail}`);
+    throw new Error(`Run завершился со статусом: ${run.status}${detail}`);
+  }
+
   // Основной текстовый чат с ассистентом
   async chat(content: string, userId: number): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
@@ -353,31 +377,11 @@ export class OpenAiService implements OnModuleInit {
         await this.checkAndWaitForActiveRuns(threadId);
 
         return await this.executeWithRetry(async (client) => {
-          // Добавляем сообщение пользователя в тред
           await client.beta.threads.messages.create(thread.id, {
             role: 'user',
             content: content,
           });
-
-          // Генерируем ответ ассистента по треду (увеличен интервал опроса для прокси)
-          const response = await client.beta.threads.runs.createAndPoll(
-            thread.id,
-            { assistant_id: assistantId },
-            { pollIntervalMs: 6000 },
-          );
-          
-          if (response.status === 'completed') {
-            const messages = await client.beta.threads.messages.list(
-              response.thread_id,
-            );
-            const assistantMessage = messages.data[0];
-            return await this.buildAnswer(assistantMessage);
-          } else {
-            const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
-            const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
-            this.logger.warn(`Run завершился со статусом: ${response.status}${detail}`);
-            throw new Error(`Run завершился со статусом: ${response.status}${detail}`);
-          }
+          return await this.runAssistantStream(client, thread.id, assistantId);
         });
       });
     } catch (error) {
@@ -528,25 +532,7 @@ export class OpenAiService implements OnModuleInit {
               { type: 'image_file', image_file: { file_id: file.id } },
             ],
           });
-
-          const response = await client.beta.threads.runs.createAndPoll(
-            thread.id,
-            { assistant_id: assistantId },
-            { pollIntervalMs: 6000 },
-          );
-          
-          if (response.status === 'completed') {
-            const messages = await client.beta.threads.messages.list(
-              response.thread_id,
-            );
-            const assistantMessage = messages.data[0];
-            return await this.buildAnswer(assistantMessage);
-          } else {
-            const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
-            const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
-            this.logger.warn(`Run завершился со статусом: ${response.status}${detail}`);
-            throw new Error(`Run завершился со статусом: ${response.status}${detail}`);
-          }
+          return await this.runAssistantStream(client, thread.id, assistantId);
         });
       });
     } catch (error) {
@@ -724,25 +710,7 @@ export class OpenAiService implements OnModuleInit {
             role: 'user',
             content,
           });
-
-          const response = await client.beta.threads.runs.createAndPoll(
-            thread.id,
-            { assistant_id: assistantId },
-            { pollIntervalMs: 6000 },
-          );
-          
-          if (response.status === 'completed') {
-            const messages = await client.beta.threads.messages.list(
-              response.thread_id,
-            );
-            const assistantMessage = messages.data[0];
-            return await this.buildAnswer(assistantMessage);
-          } else {
-            const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
-            const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
-            this.logger.warn(`Run завершился со статусом: ${response.status}${detail}`);
-            throw new Error(`Run завершился со статусом: ${response.status}${detail}`);
-          }
+          return await this.runAssistantStream(client, thread.id, assistantId);
         });
       });
     } catch (error) {

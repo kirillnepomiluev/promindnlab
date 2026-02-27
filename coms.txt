@@ -26,18 +26,51 @@ curl -s icanhazip.com
 # Если с этого сервера — server_error через прокси, а с другого сервера через тот же прокси всё ок
 
 ## Nginx на ЭТОМ сервере (где крутится Nest/Telegram-бот)
-# Если приложение за nginx: длинные запросы к ассистенту (createAndPoll 1–2 мин) не должны обрываться.
-# В location приложения добавьте или увеличьте:
-#   proxy_read_timeout 180s;
-#   proxy_connect_timeout 60s;
-#   proxy_send_timeout 180s;
-# Перезагрузка: sudo nginx -t && sudo systemctl reload nginx
+# Длинные запросы к ассистенту (createAndPoll 1–2 мин) не должны обрываться — увеличиваем таймауты.
+
+# 1) Найти конфиг, в котором проксируется приложение (promind / Nest)
+sudo grep -r "proxy_pass" /etc/nginx/ --include="*.conf" -l
+
+# 2) Открыть нужный конфиг (подставьте путь из вывода выше, например)
+sudo nano /etc/nginx/sites-available/default
+# или
+sudo nano /etc/nginx/conf.d/promind.conf
+
+# 3) В блок location, где есть proxy_pass к приложению, добавить (или заменить существующие):
+#    proxy_read_timeout 180s;
+#    proxy_connect_timeout 60s;
+#    proxy_send_timeout 180s;
+# Пример блока:
+#   location / {
+#     proxy_pass http://127.0.0.1:3000;
+#     proxy_http_version 1.1;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Real-IP $remote_addr;
+#     proxy_read_timeout 180s;
+#     proxy_connect_timeout 60s;
+#     proxy_send_timeout 180s;
+#   }
+
+# 4) Проверить конфиг и перезагрузить nginx
+sudo nginx -t && sudo systemctl reload nginx
+
+# 5) Убедиться, что nginx перезагрузился
+sudo systemctl status nginx
 
 ## Другие возможные причины
 # — Лимиты/блоки по IP на стороне прокси для этого сервера
 # — Разный User-Agent / заголовки с этого хоста (проверить логи прокси)
 # — Исходящий firewall или прокси на этом сервере (переменные HTTP_PROXY, NO_PROXY)
 # — TLS/сертификаты при исходящих запросах с этого сервера к chat.neurolabtg.ru
+
+
+# Справка: поток Assistants API (как в песочнице OpenAI, прокси работает с других серверов)
+# 1) POST /v1/threads                    — создать тред
+# 2) POST /v1/threads/{id}/messages     — добавить сообщение
+# 3) POST /v1/threads/{id}/runs         — запустить run (body: assistant_id, additional_instructions, tool_choice)
+# 4) Песочница получает stream событий: thread.run.created → queued → in_progress → step.created → message.created → message.delta ...
+# В нашем приложении используется createAndPoll (polling: создали run, затем цикл GET runs/{run_id} до терминального состояния).
+# Если server_error только с этого сервера сохранится — можно попробовать перейти на streaming (один длинный ответ со stream вместо многих poll).
 
 # Команды для автоматического обновления SSL (Let's Encrypt)
 
