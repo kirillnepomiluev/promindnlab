@@ -1,0 +1,91 @@
+# Как узнать список доменов, которые ведут на этот сервер
+
+## На сервере (какие домены обслуживаются)
+
+# Домены из конфигов nginx (server_name)
+sudo grep -r server_name /etc/nginx/ --include="*.conf" | grep -v '#' | sed 's/.*server_name//' | tr -s ' ;' '\n' | grep -v '^$' | sort -u
+
+# Домены, на которые выдан SSL (certbot)
+sudo certbot certificates 2>/dev/null | grep "Domain:" | sed 's/.*Domain: //'
+
+# Кратко: только имена из certbot
+sudo certbot certificates 2>/dev/null | grep "Certificate Name" -A 100 | grep "Domains:" | sed 's/.*Domains: //' | tr ' ' '\n' | sort -u
+
+
+# Узнать свой внешний IP (чтобы проверить, куда смотрят домены)
+curl -s ifconfig.me
+# или
+curl -s icanhazip.com
+
+
+# Обратная проверка: какие DNS записи указывают на ваш IP (нужен ваш IP)
+# Подставить YOUR_IP — например через сервисы: securitytrail.com, viewdns.info, или хостинг-панель DNS.
+# С самого сервера «все домены на мой IP» без внешних сервисов не получить.
+
+# Команды для автоматического обновления SSL (Let's Encrypt)
+
+## 1. Установка certbot (один раз)
+
+# Ubuntu / Debian
+sudo apt update
+sudo apt install -y certbot
+
+# С nginx (certbot сам настроит nginx)
+sudo apt install -y certbot python3-certbot-nginx
+
+# Альтернатива: только certbot (без плагина nginx)
+sudo apt install -y certbot
+
+
+## 2. Получение сертификата (первый раз или перевыпуск)
+
+# Вариант A: nginx плагин (остановите nginx на 80 порту, если занят)
+sudo certbot --nginx -d chat.neurolabtg.ru
+
+# Вариант B: standalone (временно поднимает свой сервер на 80)
+sudo systemctl stop nginx   # или ваш веб-сервер
+sudo certbot certonly --standalone -d chat.neurolabtg.ru
+sudo systemctl start nginx
+
+# Вариант C: webroot (nginx уже отдаёт статику из каталога)
+sudo certbot certonly --webroot -w /var/www/html -d chat.neurolabtg.ru
+
+
+## 3. Ручное обновление (проверка)
+
+sudo certbot renew --dry-run
+
+
+## 4. Автообновление по крону (рекомендуется)
+
+# Открыть крон
+crontab -e
+
+# Добавить строку (запуск дважды в день; certbot обновит только при скором истечении):
+0 3,15 * * * certbot renew --quiet --deploy-hook "systemctl reload nginx"
+
+# Или только перезагрузка nginx после успешного обновления:
+0 3 * * * certbot renew --quiet --post-hook "systemctl reload nginx"
+
+
+## 5. Автообновление через systemd (альтернатива cron)
+
+# Таймер уже есть в пакете certbot. Включить:
+sudo systemctl enable certbot.timer
+sudo systemctl start certbot.timer
+sudo systemctl status certbot.timer
+
+# После обновления certbot вызывает скрипты в:
+# /etc/letsencrypt/renewal-hooks/deploy/
+# Создать скрипт перезагрузки nginx:
+echo '#!/bin/sh
+systemctl reload nginx' | sudo tee /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+sudo chmod +x /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+
+
+## 6. Проверка срока действия сертификата
+
+sudo certbot certificates
+
+# Или через openssl:
+echo | openssl s_client -servername chat.neurolabtg.ru -connect chat.neurolabtg.ru:443 2>/dev/null | openssl x509 -noout -dates

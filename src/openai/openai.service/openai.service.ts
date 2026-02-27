@@ -370,8 +370,10 @@ export class OpenAiService {
             const assistantMessage = messages.data[0];
             return await this.buildAnswer(assistantMessage);
           } else {
-            this.logger.warn(`Run завершился со статусом: ${response.status}`);
-            throw new Error(`Run завершился со статусом: ${response.status}`);
+            const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
+            const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
+            this.logger.warn(`Run завершился со статусом: ${response.status}${detail}`);
+            throw new Error(`Run завершился со статусом: ${response.status}${detail}`);
           }
         });
       });
@@ -541,8 +543,10 @@ export class OpenAiService {
             const assistantMessage = messages.data[0];
             return await this.buildAnswer(assistantMessage);
           } else {
-            this.logger.warn(`Run завершился со статусом: ${response.status}`);
-            throw new Error(`Run завершился со статусом: ${response.status}`);
+            const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
+            const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
+            this.logger.warn(`Run завершился со статусом: ${response.status}${detail}`);
+            throw new Error(`Run завершился со статусом: ${response.status}${detail}`);
           }
         });
       });
@@ -612,7 +616,9 @@ export class OpenAiService {
           this.logger.log(`Промт оптимизирован: ${optimizedPrompt}`);
           return optimizedPrompt;
         } else {
-          this.logger.warn(`Ассистент-оптимизатор вернул статус: ${response.status}`);
+          const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
+          const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
+          this.logger.warn(`Ассистент-оптимизатор вернул статус: ${response.status}${detail}`);
           return prompt; // Возвращаем исходный промт если что-то пошло не так
         }
       });
@@ -738,8 +744,10 @@ export class OpenAiService {
             const assistantMessage = messages.data[0];
             return await this.buildAnswer(assistantMessage);
           } else {
-            this.logger.warn(`Run завершился со статусом: ${response.status}`);
-            throw new Error(`Run завершился со статусом: ${response.status}`);
+            const errInfo = (response as { last_error?: { code?: string; message?: string } }).last_error;
+            const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
+            this.logger.warn(`Run завершился со статусом: ${response.status}${detail}`);
+            throw new Error(`Run завершился со статусом: ${response.status}${detail}`);
           }
         });
       });
