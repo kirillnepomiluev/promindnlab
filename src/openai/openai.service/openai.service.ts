@@ -104,13 +104,10 @@ export class OpenAiService {
   }
 
   /**
-   * Получает активный OpenAI клиент (основной или fallback)
+   * Возвращает клиент OpenAI — всегда только прокси (без fallback на официальный API).
    */
   private async getActiveOpenAiClient(): Promise<OpenAI> {
-    if (await this.checkMainApiAvailability()) {
-      return this.openAi;
-    }
-    return this.fallbackOpenAi;
+    return this.openAi;
   }
 
   /**
@@ -118,8 +115,8 @@ export class OpenAiService {
    */
   private async executeWithRetry<T>(
     operation: (client: OpenAI) => Promise<T>,
-    maxRetries: number = 3,
-    delayMs: number = 1000
+    maxRetries: number = 5,
+    delayMs: number = 2000
   ): Promise<T> {
     let lastError: any;
     
@@ -130,26 +127,17 @@ export class OpenAiService {
       } catch (error: any) {
         lastError = error;
         
-        // Если это ошибка 502, сразу переключаемся на fallback
-        if (error.message?.includes('502') || error.status === 502) {
-          this.logger.warn(`Получена ошибка 502, переключаемся на fallback API (попытка ${attempt}/${maxRetries})`);
-          this.isMainApiAvailable = false;
-          continue;
-        }
-        
-        // Если это ошибка истекшего векторного хранилища, создаем новый тред
-        if (error.message?.includes('Vector store') && error.message?.includes('is expired')) {
-          this.logger.warn(`Векторное хранилище истекло, создаем новый тред (попытка ${attempt}/${maxRetries})`);
-          // Сбрасываем threadId для пользователя, чтобы создать новый тред
-          // Это будет обработано в вызывающем методе
-          throw new Error('VECTOR_STORE_EXPIRED');
-        }
-        
-        // Для других ошибок ждем перед повторной попыткой
+        // При 502 или server_error просто повторяем запрос через тот же прокси (без fallback)
         if (attempt < maxRetries) {
           this.logger.warn(`Попытка ${attempt} не удалась, повторяем через ${delayMs}ms`, error);
           await new Promise(resolve => setTimeout(resolve, delayMs));
           delayMs *= 2; // Экспоненциальная задержка
+        }
+        
+        // Если это ошибка истекшего векторного хранилища — прерываем retry и пробрасываем
+        if (error.message?.includes('Vector store') && error.message?.includes('is expired')) {
+          this.logger.warn(`Векторное хранилище истекло, создаем новый тред (попытка ${attempt}/${maxRetries})`);
+          throw new Error('VECTOR_STORE_EXPIRED');
         }
       }
     }
@@ -204,9 +192,12 @@ export class OpenAiService {
 
     const baseURL = this.configService.get<string>('OPENAI_BASE_URL_PRO')?.trim() || 'https://chat.neurolabtg.ru/v1';
 
+    // Только прокси: увеличенные timeout и maxRetries для стабильной работы через прокси
     this.openAi = new OpenAI({
       apiKey: key,
       baseURL,
+      timeout: 120_000, // 2 минуты на запрос
+      maxRetries: 4,
     });
 
     // Создаем fallback клиент для случаев, когда основной API недоступен
@@ -355,12 +346,11 @@ export class OpenAiService {
             content: content,
           });
 
-          // Генерируем ответ ассистента по треду
+          // Генерируем ответ ассистента по треду (увеличен интервал опроса для прокси)
           const response = await client.beta.threads.runs.createAndPoll(
             thread.id,
-            {
-              assistant_id: assistantId,
-            },
+            { assistant_id: assistantId },
+            { pollIntervalMs: 6000 },
           );
           
           if (response.status === 'completed') {
@@ -531,9 +521,8 @@ export class OpenAiService {
 
           const response = await client.beta.threads.runs.createAndPoll(
             thread.id,
-            {
-              assistant_id: assistantId,
-            },
+            { assistant_id: assistantId },
+            { pollIntervalMs: 6000 },
           );
           
           if (response.status === 'completed') {
@@ -601,9 +590,8 @@ export class OpenAiService {
         // Генерируем ответ ассистента-оптимизатора
         const response = await client.beta.threads.runs.createAndPoll(
           thread.id,
-          {
-            assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID,
-          },
+          { assistant_id: this.VIDEO_PROMPT_OPTIMIZER_ASSISTANT_ID },
+          { pollIntervalMs: 6000 },
         );
 
         if (response.status === 'completed') {
@@ -732,9 +720,8 @@ export class OpenAiService {
 
           const response = await client.beta.threads.runs.createAndPoll(
             thread.id,
-            {
-              assistant_id: assistantId,
-            },
+            { assistant_id: assistantId },
+            { pollIntervalMs: 6000 },
           );
           
           if (response.status === 'completed') {
