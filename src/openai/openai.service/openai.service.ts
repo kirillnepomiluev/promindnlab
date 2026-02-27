@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import OpenAI from 'openai';
 import { toFile } from 'openai/uploads';
@@ -26,7 +26,7 @@ export interface OpenAiAnswer {
 }
 
 @Injectable()
-export class OpenAiService {
+export class OpenAiService implements OnModuleInit {
   private readonly openAi: OpenAI;
   private readonly fallbackOpenAi: OpenAI;
   private readonly logger = new Logger(OpenAiService.name);
@@ -40,9 +40,10 @@ export class OpenAiService {
   private lastMainApiCheck: number = 0;
   private readonly API_CHECK_INTERVAL = 5 * 60 * 1000; // 5 минут
   
-  // Таймер для очистки устаревших тредов
+  // Очистка тредов только по таймеру (раз в 30 мин), не при каждом запросе
   private readonly THREAD_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 минут
   private lastThreadCleanup: number = 0;
+  private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
 
   // Поддерживаемые OpenAI API расширения файлов
   private readonly SUPPORTED_EXTENSIONS = [
@@ -207,6 +208,21 @@ export class OpenAiService {
     });
   }
 
+  onModuleInit(): void {
+    // Очистка устаревших тредов только по расписанию (раз в 30 мин), не при каждом сообщении
+    this.cleanupIntervalId = setInterval(() => {
+      void this.cleanupExpiredThreads().catch((err) =>
+        this.logger.warn('Очистка тредов завершилась с ошибкой', err),
+      );
+    }, this.THREAD_CLEANUP_INTERVAL);
+    // Первый запуск через 1 мин после старта, чтобы не нагружать прокси сразу
+    setTimeout(() => {
+      void this.cleanupExpiredThreads().catch((err) =>
+        this.logger.warn('Очистка тредов завершилась с ошибкой', err),
+      );
+    }, 60_000);
+  }
+
   /**
    * Проверяет, активен ли тред (выполняется ли в нем запрос)
    */
@@ -312,9 +328,6 @@ export class OpenAiService {
 
   // Основной текстовый чат с ассистентом
   async chat(content: string, userId: number): Promise<OpenAiAnswer> {
-    // Очистка устаревших тредов в фоне, чтобы не блокировать запрос и не нагружать прокси перед createAndPoll
-    void this.cleanupExpiredThreads().catch((err) => this.logger.warn('Очистка тредов завершилась с ошибкой', err));
-
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -477,8 +490,6 @@ export class OpenAiService {
     userId: number,
     image: Buffer,
   ): Promise<OpenAiAnswer> {
-    void this.cleanupExpiredThreads().catch((err) => this.logger.warn('Очистка тредов завершилась с ошибкой', err));
-
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -668,8 +679,6 @@ export class OpenAiService {
   ): Promise<OpenAiAnswer> {
     // Нормализуем имя файла
     const normalizedFilename = this.normalizeFilename(filename);
-
-    void this.cleanupExpiredThreads().catch((err) => this.logger.warn('Очистка тредов завершилась с ошибкой', err));
 
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
