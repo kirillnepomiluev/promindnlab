@@ -112,37 +112,57 @@ export class OpenAiService implements OnModuleInit {
   }
 
   /**
+   * Форматирует ошибку для подробного логирования (без циклических ссылок)
+   */
+  private formatErrorForLog(err: unknown): string {
+    if (err == null) return 'null';
+    if (typeof err !== 'object') return String(err);
+    const e = err as Record<string, unknown>;
+    const parts: string[] = [];
+    if (e.message != null) parts.push(`message=${String(e.message)}`);
+    if (e.name != null) parts.push(`name=${String(e.name)}`);
+    if (e.code != null) parts.push(`code=${String(e.code)}`);
+    if (e.status != null) parts.push(`status=${String(e.status)}`);
+    if (e.cause != null) parts.push(`cause=${String(e.cause)}`);
+    if (e.stack != null) parts.push(`stack=${String(e.stack).slice(0, 500)}`);
+    return parts.length > 0 ? parts.join(' | ') : JSON.stringify(err).slice(0, 500);
+  }
+
+  /**
    * Выполняет операцию с retry логикой
    */
   private async executeWithRetry<T>(
     operation: (client: OpenAI) => Promise<T>,
     maxRetries: number = 3,
-    delayMs: number = 1000
+    delayMs: number = 1000,
+    context?: string,
   ): Promise<T> {
     let lastError: any;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const client = await this.getActiveOpenAiClient();
         return await operation(client);
       } catch (error: any) {
         lastError = error;
-        
-        // При 502 или server_error просто повторяем запрос через тот же прокси (без fallback)
+        const ctx = context ? ` [${context}]` : '';
+        this.logger.warn(
+          `Попытка ${attempt}/${maxRetries} не удалась${ctx}: ${this.formatErrorForLog(error)}`,
+        );
+
         if (attempt < maxRetries) {
-          this.logger.warn(`Попытка ${attempt} не удалась, повторяем через ${delayMs}ms`, error);
-          await new Promise(resolve => setTimeout(resolve, delayMs));
-          delayMs *= 2; // Экспоненциальная задержка
+          this.logger.warn(`Повтор через ${delayMs}ms...`);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          delayMs *= 2;
         }
-        
-        // Если это ошибка истекшего векторного хранилища — прерываем retry и пробрасываем
+
         if (error.message?.includes('Vector store') && error.message?.includes('is expired')) {
-          this.logger.warn(`Векторное хранилище истекло, создаем новый тред (попытка ${attempt}/${maxRetries})`);
+          this.logger.warn('Векторное хранилище истекло, создаем новый тред');
           throw new Error('VECTOR_STORE_EXPIRED');
         }
       }
     }
-    
+
     throw lastError;
   }
 
@@ -335,10 +355,21 @@ export class OpenAiService implements OnModuleInit {
     threadId: string,
     assistantId: string,
   ): Promise<OpenAiAnswer> {
+    this.logger.debug(`runAssistantStream: threadId=${threadId} assistantId=${assistantId}`);
     const stream = client.beta.threads.runs.stream(threadId, {
       assistant_id: assistantId,
     });
-    const run = await (stream as { finalRun: () => Promise<{ status: string; thread_id: string; last_error?: { code?: string; message?: string } }> }).finalRun();
+    const run = await (stream as {
+      finalRun: () => Promise<{
+        id?: string;
+        status: string;
+        thread_id: string;
+        last_error?: { code?: string; message?: string };
+      }>;
+    }).finalRun();
+    this.logger.debug(
+      `Run завершён: runId=${(run as { id?: string }).id} status=${run.status} threadId=${run.thread_id}`,
+    );
     if (run.status === 'completed') {
       const messages = await client.beta.threads.messages.list(run.thread_id);
       const assistantMessage = messages.data[0];
@@ -346,12 +377,14 @@ export class OpenAiService implements OnModuleInit {
     }
     const errInfo = run.last_error;
     const detail = errInfo ? ` [${errInfo.code}: ${errInfo.message}]` : '';
-    this.logger.warn(`Run завершился со статусом: ${run.status}${detail}`);
+    this.logger.warn(
+      `Run failed: threadId=${threadId} assistantId=${assistantId} runId=${(run as { id?: string }).id} status=${run.status}${detail}`,
+    );
     throw new Error(`Run завершился со статусом: ${run.status}${detail}`);
   }
 
   // Основной текстовый чат с ассистентом
-  async chat(content: string, userId: number): Promise<OpenAiAnswer> {
+  async chat(content: string, userId: number, retriedWithNewThread = false): Promise<OpenAiAnswer> {
     let threadId = await this.sessionService.getSessionId(userId);
     if (threadId) {
       this.threadMap.set(userId, threadId);
@@ -376,27 +409,53 @@ export class OpenAiService implements OnModuleInit {
         // Проверяем активные runs в треде
         await this.checkAndWaitForActiveRuns(threadId);
 
-        return await this.executeWithRetry(async (client) => {
-          await client.beta.threads.messages.create(thread.id, {
-            role: 'user',
-            content: content,
-          });
-          return await this.runAssistantStream(client, thread.id, assistantId);
-        });
+        return await this.executeWithRetry(
+          async (client) => {
+            await client.beta.threads.messages.create(thread.id, {
+              role: 'user',
+              content: content,
+            });
+            return await this.runAssistantStream(client, thread.id, assistantId);
+          },
+          3,
+          1000,
+          `chat threadId=${thread.id} userId=${userId}`,
+        );
       });
     } catch (error) {
-      // Если это ошибка истекшего векторного хранилища, создаем новый тред
+      // Если это ошибка истекшего векторного хранилища — создаем новый тред
       if (error instanceof Error && error.message === 'VECTOR_STORE_EXPIRED') {
         this.logger.log('Создаем новый тред из-за истекшего векторного хранилища');
-        // Удаляем старый тред из сессии и создаем новый
         await this.sessionService.setSessionId(userId, null);
         this.threadMap.delete(userId);
-        
-        // Рекурсивно вызываем метод с новым тредом
         return await this.chat(content, userId);
       }
-      
-      this.logger.error('Ошибка в чате с ассистентом', error);
+
+      // При server_error — пробуем один раз с новым тредом (возможна порча в старом)
+      const isServerError =
+        error instanceof Error && error.message?.includes('server_error');
+      if (isServerError && threadId && !retriedWithNewThread) {
+        this.logger.warn(
+          `server_error при threadId=${threadId}, пробуем с новым тредом. ${this.formatErrorForLog(error)}`,
+        );
+        await this.sessionService.setSessionId(userId, null);
+        this.threadMap.delete(userId);
+        try {
+          return await this.chat(content, userId, true);
+        } catch (retryError) {
+          this.logger.error(
+            `Повтор с новым тредом тоже не удался: ${this.formatErrorForLog(retryError)}`,
+          );
+          return {
+            text: '🤖 Не удалось получить ответ от сервера. Попробуйте позже',
+            files: [],
+          };
+        }
+      }
+
+      this.logger.error(
+        `Ошибка в чате (userId=${userId} threadId=${threadId ?? 'new'}): ${this.formatErrorForLog(error)}`,
+      );
 
       // Если это ошибка блокировки треда, возвращаем специальное сообщение
       if (error instanceof Error && error.message.includes('Тред уже занят')) {
@@ -415,15 +474,18 @@ export class OpenAiService implements OnModuleInit {
 
   async generateImage(prompt: string): Promise<string | Buffer | null> {
     try {
-      return await this.executeWithRetry(async (client) => {
-        const { data } = await client.images.generate({
-          model: 'gpt-image-1',
-          prompt,
-          quality: 'high',
-          n: 1,
-          size: '1024x1024',
-          moderation: 'low',
-        });
+      this.logger.debug(`generateImage: prompt length=${prompt?.length ?? 0}`);
+      return await this.executeWithRetry(
+        async (client) => {
+          this.logger.debug('generateImage: отправка запроса к OpenAI...');
+          const { data } = await client.images.generate({
+            model: 'gpt-image-1',
+            prompt,
+            quality: 'high',
+            n: 1,
+            size: '1024x1024',
+            moderation: 'low',
+          });
         if (!data || data.length === 0) {
           this.logger.error('Image.generate вернул пустой data', data);
           return null;
@@ -439,9 +501,15 @@ export class OpenAiService implements OnModuleInit {
         }
         this.logger.error('Image data не содержит ни b64_json, ни url', img);
         return null;
-      });
+      },
+        3,
+        1000,
+        'generateImage',
+      );
     } catch (err: any) {
-      this.logger.error('Ошибка при генерации изображения', err);
+      this.logger.error(
+        `Ошибка при генерации изображения: ${this.formatErrorForLog(err)}`,
+      );
       return null;
     }
   }
