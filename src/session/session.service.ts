@@ -38,4 +38,16 @@ export class SessionService {
     this.cache.set(userId, sessionId);
     await this.profileRepo.update({ telegramId: String(userId) }, { sessionId });
   }
+
+  /**
+   * Возвращает все сессии с тредами (для очистки устаревших)
+   */
+  async getAllSessionsWithThreads(): Promise<{ userId: number; threadId: string }[]> {
+    const profiles = await this.profileRepo.find({
+      select: ['telegramId', 'sessionId'],
+    });
+    return profiles
+      .filter((p) => p.sessionId && p.sessionId.trim().length > 0)
+      .map((p) => ({ userId: parseInt(p.telegramId, 10), threadId: p.sessionId! }));
+  }
 }

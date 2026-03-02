@@ -44,6 +44,8 @@ export class OpenAiService implements OnModuleInit {
   private readonly THREAD_CLEANUP_INTERVAL = 30 * 60 * 1000; // 30 минут
   private lastThreadCleanup: number = 0;
   private cleanupIntervalId: ReturnType<typeof setInterval> | null = null;
+  // Профилактика: треды старше 24ч удаляются при очистке
+  private readonly THREAD_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
   // Поддерживаемые OpenAI API расширения файлов
   private readonly SUPPORTED_EXTENSIONS = [
@@ -863,44 +865,54 @@ export class OpenAiService implements OnModuleInit {
   }
 
   /**
-   * Проверяет валидность треда и очищает устаревшие
+   * Проверяет валидность треда и очищает устаревшие.
+   * Профилактика: удаляет треды из БД (не только threadMap), а также треды старше 24ч.
    */
   private async cleanupExpiredThreads(): Promise<void> {
     const now = Date.now();
-    
-    // Проверяем не чаще чем раз в 30 минут
     if (now - this.lastThreadCleanup < this.THREAD_CLEANUP_INTERVAL) {
       return;
     }
-    
     this.lastThreadCleanup = now;
     this.logger.log('Начинаю очистку устаревших тредов...');
-    
+
+    const sessions = await this.sessionService.getAllSessionsWithThreads();
     const client = await this.getActiveOpenAiClient();
     const threadsToRemove: number[] = [];
-    
-    for (const [userId, threadId] of this.threadMap.entries()) {
+    const maxAgeSec = Math.floor(this.THREAD_MAX_AGE_MS / 1000);
+
+    for (const { userId, threadId } of sessions) {
       try {
-        // Проверяем существование треда
-        await client.beta.threads.retrieve(threadId);
-      } catch (error: any) {
-        // Если тред не существует или истек, помечаем для удаления
-        if (error.message?.includes('Vector store') && error.message?.includes('is expired') ||
-            error.message?.includes('not found') ||
-            error.status === 404) {
-          this.logger.warn(`Тред ${threadId} для пользователя ${userId} истек или не найден, помечаю для удаления`);
+        const thread = await client.beta.threads.retrieve(threadId);
+        const createdAt = (thread as { created_at?: number }).created_at;
+        if (createdAt != null && createdAt < now / 1000 - maxAgeSec) {
+          this.logger.warn(
+            `Тред ${threadId} для пользователя ${userId} старше 24ч (created_at=${createdAt}), помечаю для удаления`,
+          );
           threadsToRemove.push(userId);
+        }
+      } catch (error: any) {
+        if (
+          (error.message?.includes('Vector store') && error.message?.includes('is expired')) ||
+          error.message?.includes('not found') ||
+          error.status === 404
+        ) {
+          this.logger.warn(
+            `Тред ${threadId} для пользователя ${userId} истек или не найден, помечаю для удаления`,
+          );
+          threadsToRemove.push(userId);
+        } else {
+          this.logger.warn(`Ошибка при проверке треда ${threadId}: ${error?.message}`);
         }
       }
     }
-    
-    // Удаляем невалидные треды
+
     for (const userId of threadsToRemove) {
-      await this.sessionService.setSessionId(userId, null);
+      await this.sessionService.clearSession(userId);
       this.threadMap.delete(userId);
       this.logger.log(`Тред для пользователя ${userId} удален`);
     }
-    
+
     if (threadsToRemove.length > 0) {
       this.logger.log(`Очистка завершена, удалено ${threadsToRemove.length} устаревших тредов`);
     }
