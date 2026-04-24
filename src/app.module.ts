@@ -42,7 +42,7 @@ import { VideoModule } from './video/video.module';
         username: cfg.get<string>('MAIN_DB_USER'),
         password: cfg.get<string>('MAIN_DB_PASS'),
         database: cfg.get<string>('MAIN_DB_NAME'),
-        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        autoLoadEntities: true,
         synchronize: false,
       }),
     }),

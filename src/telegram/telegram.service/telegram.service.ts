@@ -392,7 +392,7 @@ export class TelegramService {
   }
 
   // Обновление прогресса генерации видео
-  private async updateVideoProgress(ctx: Context, messageId: number, status: string, attempt: number, _maxAttempts: number) {
+  private async updateVideoProgress(ctx: Context, messageId: number, status: string, attempt: number, maxAttempts: number) {
     try {
       const elapsedSeconds = attempt * 10;
       // Форматируем статус для отображения пользователю
@@ -413,35 +413,41 @@ export class TelegramService {
         displayStatus = 'статус: отправлена';
       }
       
-      const progressText = `СОЗДАЮ ВИДЕО ---- ${elapsedSeconds}с ---- ${displayStatus}`;
+      const progressText = `СОЗДАЮ ВИДЕО ---- ${elapsedSeconds}с ---- ${displayStatus} (${attempt}/${maxAttempts})`;
       await ctx.telegram.editMessageCaption(ctx.chat.id, messageId, undefined, progressText);
     } catch (error) {
       this.logger.error('Ошибка при обновлении прогресса видео', error);
     }
   }
 
-  // Обновление прогресса генерации изображения
-  private async updateImageProgress(ctx: Context, messageId: number, attempt: number, maxAttempts: number) {
+  // Обновление прогресса генерации изображения.
+  // У OpenAI Images API нет публичного поля "процент готовности",
+  // поэтому показываем оценочный прогресс по времени выполнения.
+  private async updateImageProgress(ctx: Context, messageId: number, attempt: number) {
     try {
       const elapsedSeconds = attempt * 10;
-      const progressText = `РИСУЮ ---- ${elapsedSeconds}с ---- ${attempt}/${maxAttempts}`;
+      const estimatedPercent = Math.min(95, Math.max(5, Math.floor(5 + (elapsedSeconds / 330) * 90)));
+      const suffix = elapsedSeconds > 330 ? 'дольше обычного, жду ответ сервера...' : 'генерируется на сервере...';
+      const progressText = `РИСУЮ ---- ${elapsedSeconds}с ---- ~${estimatedPercent}% (${suffix})`;
       await ctx.telegram.editMessageCaption(ctx.chat.id, messageId, undefined, progressText);
     } catch (error) {
+      const errText = error instanceof Error ? error.message : String(error);
+      // Телеграм часто отвечает "message is not modified" при одинаковом caption.
+      if (errText.includes('message is not modified')) {
+        return;
+      }
       this.logger.error('Ошибка при обновлении прогресса изображения', error);
     }
   }
 
   // Генерация изображения с обновлением прогресса
   private async generateImageWithProgress(ctx: Context, prompt: string, progressMsg: any): Promise<string | Buffer | null> {
-    const maxAttempts = 6; // максимум 1 минута ожидания (6 * 10 секунд)
     let attempts = 0;
 
     // Запускаем обновление прогресса каждые 10 секунд
     const progressInterval = setInterval(async () => {
       attempts++;
-      if (attempts <= maxAttempts) {
-        await this.updateImageProgress(ctx, progressMsg.message_id, attempts, maxAttempts);
-      }
+      await this.updateImageProgress(ctx, progressMsg.message_id, attempts);
     }, 10000);
 
     try {
@@ -466,15 +472,12 @@ export class TelegramService {
     prompt: string,
     progressMsg: any,
   ): Promise<string | Buffer | null> {
-    const maxAttempts = 6; // максимум 1 минута ожидания (6 * 10 секунд)
     let attempts = 0;
 
     // Запускаем обновление прогресса каждые 10 секунд
     const progressInterval = setInterval(async () => {
       attempts++;
-      if (attempts <= maxAttempts) {
-        await this.updateImageProgress(ctx, progressMsg.message_id, attempts, maxAttempts);
-      }
+      await this.updateImageProgress(ctx, progressMsg.message_id, attempts);
     }, 10000);
 
     try {
@@ -489,6 +492,30 @@ export class TelegramService {
       // Останавливаем обновление прогресса в случае ошибки
       clearInterval(progressInterval);
       throw error;
+    }
+  }
+
+  // Асинхронная генерация изображения, чтобы не блокировать update Telegram
+  // и не упираться в timeout обработчика.
+  private async processImageRequest(ctx: Context, prompt: string, placeholder: any): Promise<void> {
+    try {
+      const image = await this.generateImageWithProgress(ctx, prompt, placeholder);
+      await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+
+      if (image) {
+        await this.sendPhoto(ctx, image);
+      } else {
+        await ctx.reply('Не удалось сгенерировать изображение');
+      }
+    } catch (error) {
+      try {
+        await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
+      } catch (deleteError) {
+        this.logger.warn('Не удалось удалить сообщение "РИСУЮ" после ошибки', deleteError);
+      }
+
+      this.logger.error('Ошибка при асинхронной генерации изображения', error);
+      await ctx.reply('Произошла ошибка при генерации изображения. Попробуйте позже.');
     }
   }
 
@@ -868,13 +895,10 @@ export class TelegramService {
           if (!(await this.chargeTokens(ctx, user, this.COST_IMAGE))) return;
           const placeholder = await this.sendAnimation(ctx, 'drawing_a.mp4', 'РИСУЮ ...');
           const prompt = q.replace('/image', '').trim();
-          const image = await this.generateImageWithProgress(ctx, prompt, placeholder);
-          await ctx.telegram.deleteMessage(ctx.chat.id, placeholder.message_id);
-          if (image) {
-            await this.sendPhoto(ctx, image);
-          } else {
-            await ctx.reply('Не удалось сгенерировать изображение');
-          }
+          this.processImageRequest(ctx, prompt, placeholder).catch((error) => {
+            this.logger.error('Ошибка запуска асинхронной генерации изображения', error);
+          });
+          return;
         } else {
           // Текстовый чат
           // показываем пользователю, что мы "думаем" над ответом
