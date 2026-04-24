@@ -295,7 +295,7 @@ export class OpenAiService implements OnModuleInit {
       await new Promise((res) => setTimeout(res, 3000)); // Ждём 3 секунды перед повторной проверкой
 
       const client = await this.getActiveOpenAiClient();
-      const run = await client.beta.threads.runs.retrieve(threadId, runId);
+      const run = await client.beta.threads.runs.retrieve(runId, { thread_id: threadId });
       runStatus = run.status;
     }
 
@@ -481,11 +481,11 @@ export class OpenAiService implements OnModuleInit {
         async (client) => {
           this.logger.debug('generateImage: отправка запроса к OpenAI...');
           const { data } = await client.images.generate({
-            model: 'gpt-image-1',
+            model: 'gpt-image-2',
             prompt,
             quality: 'high',
             n: 1,
-            size: '1024x1024',
+            size: '1024x1536',
             moderation: 'low',
           });
         if (!data || data.length === 0) {
@@ -531,10 +531,10 @@ export class OpenAiService implements OnModuleInit {
         const { data } = await client.images.edit({
           image: file,
           prompt,
-          model: 'gpt-image-1',
+          model: 'gpt-image-2',
           quality: 'high',
           n: 1,
-          size: '1024x1024',
+          size: '1024x1536',
         });
         if (!data || data.length === 0) {
           this.logger.error('Image.edit вернул пустой data', data);
